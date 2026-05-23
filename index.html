@@ -499,16 +499,44 @@
       );
     }
 
-    function shuffleKnockoutPlaceholders(groups) {
-      const firsts=groups.map(g=>({group:g,rank:1,pts:g.standings?.[0]?.pts||0,gd:g.standings?.[0]?.gd||0,gf:g.standings?.[0]?.gf||0,placeholderId:`${g.id}-rank1`,name:`${g.name} 1위`}));
-      const seconds=groups.map(g=>({group:g,rank:2,pts:g.standings?.[1]?.pts||0,gd:g.standings?.[1]?.gd||0,gf:g.standings?.[1]?.gf||0,placeholderId:`${g.id}-rank2`,name:`${g.name} 2위`}));
-      const ranked=[...firsts].sort((a,b)=>b.pts-a.pts||b.gd-a.gd||b.gf-a.gf);
-      const shuffled=[...seconds].sort(()=>Math.random()-0.5);
-      const final=[];
-      ranked.forEach((f,i)=>final.push({id:`ph-${f.group.id}-rank1-${Math.random()}`,name:f.name,isSeeded:true,seedRank:i+1,placeholderId:f.placeholderId}));
-      shuffled.forEach((s,i)=>final.push({id:`ph-${s.group.id}-rank2-${Math.random()}`,name:s.name,isSeeded:false,seedRank:ranked.length+i+1,placeholderId:s.placeholderId}));
-      const matches=generateTournamentBracket(final,'k');
-      const collision=matches.some(m=>{
+    // groups에서 각 조 상위 N명을 본선 진출시키는 대진표 생성
+    // advancePerGroup: 각 조에서 본선 진출시킬 인원수 (1, 2, 3, 4 ...)
+    function shuffleKnockoutPlaceholders(groups, advancePerGroup=2) {
+      // 각 등수별로 진출자 후보 모으기
+      const byRank = []; // [{rank, candidates: [{group, ...}]}]
+      for(let rank=1; rank<=advancePerGroup; rank++){
+        const candidates = groups.map(g=>({
+          group: g,
+          rank,
+          pts: g.standings?.[rank-1]?.pts||0,
+          gd:  g.standings?.[rank-1]?.gd||0,
+          gf:  g.standings?.[rank-1]?.gf||0,
+          placeholderId: `${g.id}-rank${rank}`,
+          name: `${g.name} ${rank}위`
+        }));
+        byRank.push({rank, candidates});
+      }
+
+      // 1위들은 시드 (성적순), 나머지 등수들은 셔플
+      const final = [];
+      // 1위: 시드 (포인트/득실차로 정렬)
+      const firsts = [...(byRank[0]?.candidates||[])].sort((a,b)=>b.pts-a.pts||b.gd-a.gd||b.gf-a.gf);
+      firsts.forEach((f,i)=>final.push({
+        id:`ph-${f.group.id}-rank1-${Math.random()}`,
+        name:f.name, isSeeded:true, seedRank:i+1, placeholderId:f.placeholderId
+      }));
+      // 2위 이하: 셔플
+      for(let i=1; i<byRank.length; i++){
+        const shuffled = [...byRank[i].candidates].sort(()=>Math.random()-0.5);
+        shuffled.forEach((s,j)=>final.push({
+          id:`ph-${s.group.id}-rank${s.rank}-${Math.random()}`,
+          name:s.name, isSeeded:false, seedRank:final.length+1, placeholderId:s.placeholderId
+        }));
+      }
+
+      const matches = generateTournamentBracket(final,'k');
+      // 같은 조 출신끼리 1라운드에서 만나지 않게 충돌 검사
+      const collision = matches.some(m=>{
         if(m.round===1&&m.participant1&&m.participant2){
           const g1=m.participant1.placeholderId?.split('-')[0];
           const g2=m.participant2.placeholderId?.split('-')[0];
@@ -516,7 +544,18 @@
         }
         return false;
       });
-      return collision?shuffleKnockoutPlaceholders(groups):matches;
+      // 충돌 시 최대 10회 재시도 (무한루프 방지)
+      if(collision && !shuffleKnockoutPlaceholders._retryCount){ shuffleKnockoutPlaceholders._retryCount = 0; }
+      if(collision){
+        shuffleKnockoutPlaceholders._retryCount = (shuffleKnockoutPlaceholders._retryCount||0)+1;
+        if(shuffleKnockoutPlaceholders._retryCount < 10){
+          return shuffleKnockoutPlaceholders(groups, advancePerGroup);
+        }
+        shuffleKnockoutPlaceholders._retryCount = 0;
+        return matches; // 10회 시도 후에도 충돌이면 그냥 반환
+      }
+      shuffleKnockoutPlaceholders._retryCount = 0;
+      return matches;
     }
 
     // ================================================================
@@ -682,6 +721,7 @@
     // ================================================================
     const ScheduleSection = ({ rounds, onMatchClick, onScoreboardLink, onAddRound }) => {
       const [collapsed, setCollapsed] = useState(false);
+      const [showAddModal, setShowAddModal] = useState(false);
 
       // 라운드들을 가로지르며 매치마다 전역 번호 부여 (bye 제외)
       const matchNumbers = {};
@@ -693,34 +733,24 @@
         });
       });
 
+      // 활성 참가자 수 계산
+      const activeCount = (rounds||[]).length>0
+        ? (rounds[0].matches||[]).filter(m=>!m.home.id.startsWith('bye')&&!m.away.id.startsWith('bye')).length * 2 + (rounds[0].matches||[]).filter(m=>m.home.id.startsWith('bye')||m.away.id.startsWith('bye')).length
+        : 0;
+      const perRound = Math.floor(activeCount/2);
+      const fullCycle = activeCount > 1 ? activeCount-1 : 1;
+
       return (
         <div>
           <div className="flex items-center gap-3 mb-6 px-4 flex-wrap">
             <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">Match Schedule</h3>
             <span className="text-[12px] font-black text-slate-400 bg-slate-100 px-2 py-0.5 rounded">총 {n}경기 · {rounds.length}라운드</span>
             <div className="h-0.5 flex-1 bg-slate-100"></div>
-            {onAddRound&&(()=>{
-              const activeCount = (rounds||[]).length>0
-                ? (rounds[0].matches||[]).filter(m=>!m.home.id.startsWith('bye')&&!m.away.id.startsWith('bye')).length * 2 + (rounds[0].matches||[]).filter(m=>m.home.id.startsWith('bye')||m.away.id.startsWith('bye')).length
-                : 0;
-              const perRound = Math.floor(activeCount/2);
-              const fullCycle = activeCount > 1 ? activeCount-1 : 1;
-              return (
-                <button onClick={()=>{
-                  const choice = window.prompt(
-                    `라운드 추가 방식을 선택하세요:\n\n` +
-                    `1 = 셔플 한 라운드 (${perRound}경기, 새 대진)\n` +
-                    `2 = 풀리그 1바퀴 추가 (${fullCycle}라운드 ${perRound*fullCycle}경기, 모두 vs 모두)\n\n` +
-                    `숫자를 입력하세요 (1 또는 2)`,
-                    '1'
-                  );
-                  if(choice==='1') onAddRound('shuffle');
-                  else if(choice==='2') onAddRound('roundrobin');
-                }} className="text-[13px] font-black bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg">
-                  ➕ 라운드 추가
-                </button>
-              );
-            })()}
+            {onAddRound&&(
+              <button onClick={()=>setShowAddModal(true)} className="text-[13px] font-black bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg">
+                ➕ 라운드 추가
+              </button>
+            )}
             <button onClick={()=>setCollapsed(c=>!c)} className="text-[13px] font-black bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg">
               {collapsed?'▼ 펼치기':'▲ 접기'}
             </button>
@@ -774,6 +804,33 @@
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* ➕ 라운드 추가 모달 */}
+          {showAddModal&&(
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={()=>setShowAddModal(false)}>
+              <div className="bg-white rounded-2xl sm:rounded-3xl w-full max-w-md shadow-2xl overflow-hidden" onClick={e=>e.stopPropagation()}>
+                <div className="bg-blue-600 p-5 text-white text-center">
+                  <p className="text-[11px] font-black text-blue-200 uppercase tracking-widest mb-1">Add Round</p>
+                  <h3 className="text-xl font-black italic">라운드 추가</h3>
+                </div>
+                <div className="p-5 space-y-3">
+                  <p className="text-sm text-slate-600">어떤 방식으로 라운드를 추가할까요?</p>
+                  <button onClick={()=>{onAddRound('shuffle');setShowAddModal(false);}}
+                    className="w-full p-4 bg-blue-50 hover:bg-blue-100 border-2 border-blue-200 hover:border-blue-400 rounded-xl text-left transition-all active:scale-95">
+                    <p className="font-black text-blue-900 text-base">🎲 셔플 한 라운드</p>
+                    <p className="text-[12px] text-slate-600 mt-0.5">{perRound}경기 — 참가자를 무작위로 섞어 새 대진</p>
+                  </button>
+                  <button onClick={()=>{onAddRound('roundrobin');setShowAddModal(false);}}
+                    className="w-full p-4 bg-amber-50 hover:bg-amber-100 border-2 border-amber-200 hover:border-amber-400 rounded-xl text-left transition-all active:scale-95">
+                    <p className="font-black text-amber-900 text-base">🏆 풀리그 1바퀴 추가</p>
+                    <p className="text-[12px] text-slate-600 mt-0.5">{fullCycle}라운드 {perRound*fullCycle}경기 — 모두 vs 모두 정석 룰</p>
+                  </button>
+                  <button onClick={()=>setShowAddModal(false)}
+                    className="w-full py-3 bg-slate-100 text-slate-500 rounded-xl font-bold text-sm">취소</button>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -884,6 +941,7 @@
     // ================================================================
     const GroupScheduleBlock = ({ group, onMatchClick, onScoreboardLink, onAddRound }) => {
       const [collapsed, setCollapsed] = useState(false);
+      const [showAddModal, setShowAddModal] = useState(false);
       // 매치 번호 매김 (조 내부에서)
       const matchNumbers = {};
       let n = 0;
@@ -894,32 +952,21 @@
           matchNumbers[m.id] = n;
         });
       });
+      const activeP = (group.participants||[]).filter(p=>p&&!p.id.startsWith('bye'));
+      const activeN = activeP.length;
+      const perRound = Math.floor(activeN/2);
+      const fullCycle = activeN > 1 ? activeN-1 : 1;
+
       return (
         <div className="space-y-2">
           <div className="flex items-center justify-between border-b border-slate-100 pb-1 flex-wrap gap-1">
             <p className="text-[12px] font-black text-slate-400 uppercase tracking-widest">Match Schedule · 총 {n}경기 · {(group.rounds||[]).length}R</p>
             <div className="flex gap-1">
-              {onAddRound&&(()=>{
-                const activeP = (group.participants||[]).filter(p=>p&&!p.id.startsWith('bye'));
-                const n = activeP.length;
-                const perRound = Math.floor(n/2);
-                const fullCycle = n > 1 ? n-1 : 1;
-                return (
-                  <button onClick={()=>{
-                    const choice = window.prompt(
-                      `${group.name}에 라운드를 추가합니다:\n\n` +
-                      `1 = 셔플 한 라운드 (${perRound}경기, 새 대진)\n` +
-                      `2 = 풀리그 1바퀴 추가 (${fullCycle}라운드 ${perRound*fullCycle}경기, 모두 vs 모두)\n\n` +
-                      `숫자를 입력하세요 (1 또는 2)`,
-                      '1'
-                    );
-                    if(choice==='1') onAddRound(group.id, 'shuffle');
-                    else if(choice==='2') onAddRound(group.id, 'roundrobin');
-                  }} className="text-[12px] font-black bg-blue-600 hover:bg-blue-700 text-white px-2 py-0.5 rounded">
-                    ➕ 라운드
-                  </button>
-                );
-              })()}
+              {onAddRound&&(
+                <button onClick={()=>setShowAddModal(true)} className="text-[12px] font-black bg-blue-600 hover:bg-blue-700 text-white px-2 py-0.5 rounded">
+                  ➕ 라운드
+                </button>
+              )}
               <button onClick={()=>setCollapsed(c=>!c)} className="text-[12px] font-black bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-0.5 rounded">
                 {collapsed?'▼ 펼치기':'▲ 접기'}
               </button>
@@ -961,6 +1008,33 @@
                   </div>
                 );
               }))}
+            </div>
+          )}
+
+          {/* ➕ 라운드 추가 모달 */}
+          {showAddModal&&(
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={()=>setShowAddModal(false)}>
+              <div className="bg-white rounded-2xl sm:rounded-3xl w-full max-w-md shadow-2xl overflow-hidden" onClick={e=>e.stopPropagation()}>
+                <div className="bg-blue-600 p-5 text-white text-center">
+                  <p className="text-[11px] font-black text-blue-200 uppercase tracking-widest mb-1">Add Round to {group.name}</p>
+                  <h3 className="text-xl font-black italic">{group.name} 라운드 추가</h3>
+                </div>
+                <div className="p-5 space-y-3">
+                  <p className="text-sm text-slate-600">어떤 방식으로 라운드를 추가할까요?</p>
+                  <button onClick={()=>{onAddRound(group.id,'shuffle');setShowAddModal(false);}}
+                    className="w-full p-4 bg-blue-50 hover:bg-blue-100 border-2 border-blue-200 hover:border-blue-400 rounded-xl text-left transition-all active:scale-95">
+                    <p className="font-black text-blue-900 text-base">🎲 셔플 한 라운드</p>
+                    <p className="text-[12px] text-slate-600 mt-0.5">{perRound}경기 — 참가자를 무작위로 섞어 새 대진</p>
+                  </button>
+                  <button onClick={()=>{onAddRound(group.id,'roundrobin');setShowAddModal(false);}}
+                    className="w-full p-4 bg-amber-50 hover:bg-amber-100 border-2 border-amber-200 hover:border-amber-400 rounded-xl text-left transition-all active:scale-95">
+                    <p className="font-black text-amber-900 text-base">🏆 풀리그 1바퀴 추가</p>
+                    <p className="text-[12px] text-slate-600 mt-0.5">{fullCycle}라운드 {perRound*fullCycle}경기 — 모두 vs 모두 정석 룰</p>
+                  </button>
+                  <button onClick={()=>setShowAddModal(false)}
+                    className="w-full py-3 bg-slate-100 text-slate-500 rounded-xl font-bold text-sm">취소</button>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -2178,6 +2252,8 @@
     const DEFAULT_CONFIG = {
       name:'', sport:'soccer', matchType:'team_match', tournamentType:TType.TOURNAMENT,
       teamFormat:'2D1S', teamRounds:1, sets:3,
+      // 🏆 리그+본선: 각 조에서 본선에 진출할 인원수
+      advancePerGroup: 2,
       // 🎾 테니스 전용 옵션
       tennisGamesPerSet: 6,    // 세트당 게임수 (4/6/8)
       tennisDeuce: false,      // false=노애드 (기본), true=어드밴티지
@@ -2652,7 +2728,7 @@
       const handleRandomDraw=()=>{
         if(config.tournamentType!==TType.GROUP_KNOCKOUT)return;
         if(window.confirm('본선 대진표를 다시 추첨하시겠습니까?')){
-          const nm=shuffleKnockoutPlaceholders(generatedGroups);
+          const nm=shuffleKnockoutPlaceholders(generatedGroups, config.advancePerGroup||2);
           setGeneratedMatches([...syncKnockout(generatedGroups,nm)]);
         }
       };
@@ -2662,7 +2738,7 @@
           const groups=finalData;
           groups.forEach(g=>{g.rounds=generateLeagueSchedule(g.participants,g.id);g.standings=calculateStandings(g.participants,g.rounds,isSetsGame(config.sport));});
           setGeneratedGroups(groups);
-          if(config.tournamentType===TType.GROUP_KNOCKOUT){const km=shuffleKnockoutPlaceholders(groups);setGeneratedMatches([...syncKnockout(groups,km)]);}
+          if(config.tournamentType===TType.GROUP_KNOCKOUT){const km=shuffleKnockoutPlaceholders(groups, config.advancePerGroup||2);setGeneratedMatches([...syncKnockout(groups,km)]);}
           else setGeneratedMatches([]);
         }else{
           const pts=finalData;setActiveParticipants(pts);
@@ -2899,6 +2975,24 @@
                         ))}
                       </div>
                     </div>
+
+                    {/* 🏆 리그+본선: 본선 진출자 수 */}
+                    {config.tournamentType===TType.GROUP_KNOCKOUT&&(
+                      <div className="space-y-4 bg-blue-50 p-4 rounded-2xl border-2 border-blue-200">
+                        <label className="text-[12px] font-black text-blue-700 uppercase tracking-widest">🏆 본선 진출 인원</label>
+                        <p className="text-sm text-slate-600">각 조에서 본선에 진출할 인원수를 선택하세요</p>
+                        <div className="grid grid-cols-4 gap-2">
+                          {[1,2,3,4].map(n=>(
+                            <button key={n} onClick={()=>setConfig({...config,advancePerGroup:n})}
+                              className={`p-3 rounded-xl border-2 text-center transition-all ${(config.advancePerGroup||2)===n?'border-blue-500 bg-blue-100 text-blue-700':'border-slate-100 bg-white text-slate-500 hover:border-blue-300'}`}>
+                              <p className="font-black text-lg">{n}</p>
+                              <p className="text-[10px] text-slate-400 mt-0.5">{n===1?'1위만':`상위 ${n}명`}</p>
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-[11px] text-slate-500">예: 2명 선택 → 각 조 1·2위 본선 진출. 같은 조 출신은 1라운드에서 만나지 않게 자동 배치됩니다.</p>
+                      </div>
+                    )}
                     {isSetsGame(config.sport)&&(
                       <div className="space-y-4">
                         <label className="text-[12px] font-black text-slate-400 uppercase tracking-widest">3. 세트 방식 <span className="text-slate-300">({SPORTS_LIST.find(s=>s.id===config.sport)?.name})</span></label>
