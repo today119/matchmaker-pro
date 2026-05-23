@@ -195,12 +195,167 @@
     // 세트제로 진행하는 종목 — 배드민턴, 테니스, 탁구, 배구
     const SETS_SPORTS = ['badminton','tennis','tabletennis','volleyball'];
     const isSetsGame = (sport) => SETS_SPORTS.includes(sport);
+    // 테니스만 특수 로직 사용
+    const isTennis = (sport) => sport === 'tennis';
     // 선택 가능한 세트제 옵션: 단판 / 3판 2선승 / 5판 3선승
     const SETS_OPTIONS = [
       { value: 1, label: '단판제',      sub: '1세트' },
       { value: 3, label: '3판 2선승제', sub: '3세트' },
       { value: 5, label: '5판 3선승제', sub: '5세트' },
     ];
+    // 테니스 — 세트당 게임수 옵션
+    const TENNIS_GAMES_OPTIONS = [
+      { value: 4, label: '4게임 선승', sub: '간이' },
+      { value: 6, label: '6게임 선승', sub: '정식 (기본)' },
+      { value: 8, label: '8게임 선승', sub: '프로 셋' },
+    ];
+
+    // ================================================================
+    //  🎾 테니스 점수 엔진 — 정석 ATP/WTA 룰
+    // ================================================================
+    // 포인트 단계: 0 → 15 → 30 → 40 → (게임승 or 듀스)
+    const TENNIS_POINTS = [0, 15, 30, 40];
+    const ptDisplay = (p, isAd) => isAd ? 'AD' : (p<=3 ? TENNIS_POINTS[p] : 40);
+
+    // 한 포인트 후의 상태 계산
+    // state: {gA, gB, pA, pB, isDeuce, advA, advB, isTiebreak, tbA, tbB}
+    // settings: {gamesPerSet, deuce: true=듀스, false=노애드, tiebreak: true, isFinalSet: boolean}
+    // scorer: 'A' or 'B'
+    function tennisScorePoint(state, settings, scorer) {
+      const next = {...state};
+      const {gamesPerSet, deuce, tiebreak, isFinalSet} = settings;
+
+      // 1. 타이브레이크 진행 중
+      if(next.isTiebreak){
+        if(scorer==='A') next.tbA++; else next.tbB++;
+        // 마지막 세트 매치 타이브레이크면 10점, 일반은 7점
+        const tbTarget = isFinalSet ? 10 : 7;
+        const tbA = next.tbA, tbB = next.tbB;
+        if(tbA >= tbTarget && tbA - tbB >= 2){
+          // A 타이브레이크 승
+          next.gA++; next.tbA = 0; next.tbB = 0; next.isTiebreak = false;
+          return endGame(next, settings);
+        }
+        if(tbB >= tbTarget && tbB - tbA >= 2){
+          next.gB++; next.tbA = 0; next.tbB = 0; next.isTiebreak = false;
+          return endGame(next, settings);
+        }
+        return next;
+      }
+
+      // 2. 듀스 모드 (40-40)
+      if(next.isDeuce){
+        if(deuce){
+          // 어드밴티지 룰
+          if(scorer==='A'){
+            if(next.advB){ next.advB=false; } // B 어드 → 듀스로 복귀
+            else if(next.advA){ // A가 어드 + A 득점 → 게임승
+              next.advA=false; next.isDeuce=false; next.pA=0; next.pB=0;
+              next.gA++;
+              return endGame(next, settings);
+            }
+            else { next.advA=true; }
+          } else {
+            if(next.advA){ next.advA=false; }
+            else if(next.advB){
+              next.advB=false; next.isDeuce=false; next.pA=0; next.pB=0;
+              next.gB++;
+              return endGame(next, settings);
+            }
+            else { next.advB=true; }
+          }
+        } else {
+          // 노애드 — 다음 1점 따는 사람이 게임 가져감
+          next.isDeuce=false; next.pA=0; next.pB=0;
+          if(scorer==='A') next.gA++; else next.gB++;
+          return endGame(next, settings);
+        }
+        return next;
+      }
+
+      // 3. 일반 포인트
+      if(scorer==='A') next.pA++; else next.pB++;
+
+      // 3-1. 40-40 진입 → 듀스
+      if(next.pA===3 && next.pB===3){
+        next.isDeuce = true;
+        return next;
+      }
+      // 3-2. 누군가 40 이상이고 상대보다 2점 차이면 게임승
+      if(next.pA>=4 && next.pA - next.pB >= 2){
+        next.pA=0; next.pB=0; next.gA++;
+        return endGame(next, settings);
+      }
+      if(next.pB>=4 && next.pB - next.pA >= 2){
+        next.pA=0; next.pB=0; next.gB++;
+        return endGame(next, settings);
+      }
+      return next;
+    }
+
+    // 게임 종료 후 세트/타이브레이크 진입 여부 판단
+    function endGame(state, settings){
+      const {gamesPerSet, tiebreak, isFinalSet} = settings;
+      const {gA, gB} = state;
+
+      // 마지막 세트 매치 타이브레이크 모드 — gamesPerSet 무시, 10점 매치 타이브레이크
+      // (3판2선승의 3세트 또는 5판3선승의 5세트가 1-1 또는 2-2일 때)
+
+      // 일반 세트 종료
+      // 6게임 선승: 6-0~6-4 = 세트승, 5-5 → 7게임선승(6-5는 계속), 6-6 → 타이브레이크
+      const target = gamesPerSet;
+
+      if(gA === target && gB <= target - 2){
+        // 6-0 ~ 6-4 처럼 깔끔한 승
+        return endSet(state, 'A');
+      }
+      if(gB === target && gA <= target - 2){
+        return endSet(state, 'B');
+      }
+      // 5-5 상황: 한 게임 더 이어가서 7-5면 종료
+      if(gA === target + 1 && gB <= target - 1){
+        // 7-5
+        return endSet(state, 'A');
+      }
+      if(gB === target + 1 && gA <= target - 1){
+        return endSet(state, 'B');
+      }
+      // 6-6 또는 4-4 (4게임 선승의 경우) → 타이브레이크
+      if(tiebreak && gA === target && gB === target){
+        state.isTiebreak = true;
+        state.tbA = 0; state.tbB = 0;
+      }
+      return state;
+    }
+
+    // 세트 종료 처리
+    function endSet(state, winner){
+      if(winner==='A') state.sA++; else state.sB++;
+      state.gA = 0; state.gB = 0;
+      state.pA = 0; state.pB = 0;
+      state.advA = false; state.advB = false;
+      state.isDeuce = false;
+      state.isTiebreak = false;
+      state.tbA = 0; state.tbB = 0;
+      // 세트 히스토리 기록
+      if(!state.setHistory) state.setHistory = [];
+      // 마지막 세트 점수 (직전 게임 결과)
+      return state;
+    }
+
+    // 초기 테니스 상태
+    function initTennisState(){
+      return {
+        sA:0, sB:0,                    // 매치 세트 스코어
+        gA:0, gB:0,                    // 현재 세트 게임 스코어
+        pA:0, pB:0,                    // 현재 게임 포인트 (0~3 → 0/15/30/40)
+        advA:false, advB:false,        // 어드밴티지 보유 여부
+        isDeuce:false,                 // 듀스 상태
+        isTiebreak:false,              // 타이브레이크 진행 중
+        tbA:0, tbB:0,                  // 타이브레이크 점수
+        setHistory:[]                  // [{gA, gB}, ...] 완료된 세트 게임수
+      };
+    }
     const MATCH_TYPES = [
       { id: 'individual', name: '개인전', icon: '👤' },
       { id: 'doubles',    name: '복식',   icon: '👥' },
@@ -1596,8 +1751,18 @@
     // ================================================================
     const ScoreboardView = ({ match, config, tournamentId, groupId, onSaved, onClose }) => {
       const sm = isSetsGame(config?.sport);
+      const tn = isTennis(config?.sport);
       const totalSets = config?.sets || 3;
       const winSets   = Math.ceil(totalSets / 2);
+
+      // 🎾 테니스 설정
+      const tennisSettings = {
+        gamesPerSet: config?.tennisGamesPerSet || 6,
+        deuce: !!config?.tennisDeuce,
+        tiebreak: config?.tennisTiebreak !== false,
+        // 마지막 세트 매치 타이브레이크는 동적으로 계산 (현재 세트가 마지막일 때)
+        finalMatchTb: config?.tennisFinalMatchTb !== false
+      };
 
       const [curSet,  setCurSet]  = useState(1);
       const [scoreA,  setScoreA]  = useState(0); // 현재 세트 점수 (논리적 A = match.home)
@@ -1607,8 +1772,11 @@
       const [done,    setDone]    = useState(false);
       const [courtSwapped, setCourtSwapped] = useState(false); // 좌우 자리 교체 (표시만)
 
-      const wonA = history.filter(s=>s.a>s.b).length;
-      const wonB = history.filter(s=>s.b>s.a).length;
+      // 🎾 테니스 전용 상태
+      const [tnState, setTnState] = useState(()=>initTennisState());
+
+      const wonA = tn ? tnState.sA : history.filter(s=>s.a>s.b).length;
+      const wonB = tn ? tnState.sB : history.filter(s=>s.b>s.a).length;
       const matchOver = wonA>=winSets || wonB>=winSets;
       const nameA = match?.home?.name || match?.participant1?.name || '홈';
       const nameB = match?.away?.name || match?.participant2?.name || '원정';
@@ -1620,12 +1788,106 @@
       const rightScore= courtSwapped ? scoreA : scoreB;
       const leftWon   = courtSwapped ? wonB   : wonA;
       const rightWon  = courtSwapped ? wonA   : wonB;
+
+      // 🎾 테니스용 좌/우 값
+      const tnLeftSets    = courtSwapped ? tnState.sB : tnState.sA;
+      const tnRightSets   = courtSwapped ? tnState.sA : tnState.sB;
+      const tnLeftGames   = courtSwapped ? tnState.gB : tnState.gA;
+      const tnRightGames  = courtSwapped ? tnState.gA : tnState.gB;
+      // 현재 포인트 표시 (15/30/40/AD or 타이브레이크 점수)
+      let tnLeftPt = '0', tnRightPt = '0';
+      if(tnState.isTiebreak){
+        tnLeftPt = String(courtSwapped ? tnState.tbB : tnState.tbA);
+        tnRightPt = String(courtSwapped ? tnState.tbA : tnState.tbB);
+      } else if(tnState.isDeuce){
+        if(tnState.advA){ tnLeftPt = courtSwapped?'40':'AD'; tnRightPt = courtSwapped?'AD':'40'; }
+        else if(tnState.advB){ tnLeftPt = courtSwapped?'AD':'40'; tnRightPt = courtSwapped?'40':'AD'; }
+        else { tnLeftPt = '40'; tnRightPt = '40'; }
+      } else {
+        const pA = TENNIS_POINTS[tnState.pA] !== undefined ? TENNIS_POINTS[tnState.pA] : 40;
+        const pB = TENNIS_POINTS[tnState.pB] !== undefined ? TENNIS_POINTS[tnState.pB] : 40;
+        tnLeftPt = String(courtSwapped ? pB : pA);
+        tnRightPt = String(courtSwapped ? pA : pB);
+      }
+
       // 좌/우 클릭 시 어느 쪽 점수가 올라갈지
       const adjLeft  = (delta) => adj(courtSwapped ? 'B' : 'A', delta);
       const adjRight = (delta) => adj(courtSwapped ? 'A' : 'B', delta);
 
       const adj = (side, delta) => {
         if(matchOver||done) return;
+        // 🎾 테니스 분기
+        if(tn){
+          if(delta > 0){
+            // 마지막 세트 매치 타이브레이크 판정
+            const totalPlayed = tnState.sA + tnState.sB;
+            const isFinalSet = tennisSettings.finalMatchTb && totalPlayed === totalSets - 1 && totalSets > 1;
+            // 매치 타이브레이크는 첫 게임부터 타이브레이크 모드
+            const cur = {...tnState};
+            if(isFinalSet && cur.gA === 0 && cur.gB === 0 && !cur.isTiebreak){
+              cur.isTiebreak = true;
+              cur.tbA = 0; cur.tbB = 0;
+            }
+            const settings = {...tennisSettings, isFinalSet};
+            const next = tennisScorePoint(cur, settings, side);
+            // 세트가 완료됐는지 확인 (sA 또는 sB가 증가했는지)
+            if(next.sA > tnState.sA || next.sB > tnState.sB){
+              // 세트 종료 — 게임수 히스토리 기록
+              const finishedSetGames = {gA: tnState.gA + (side==='A'?1:0), gB: tnState.gB + (side==='B'?1:0)};
+              // 실제로는 endGame이 끝나면서 gA/gB가 리셋되기 전 값 필요 → 다른 방식 사용
+              // tnState에서 endSet 직전 값을 알 수 없으니, next의 setHistory에 추가
+              if(!next.setHistory) next.setHistory = [...(tnState.setHistory||[])];
+              else next.setHistory = [...(tnState.setHistory||[]), ...next.setHistory.slice((tnState.setHistory||[]).length)];
+              // 직전 게임수 추적 — 마지막 게임 직전 상태 + 1
+              const lastA = tnState.gA + (side==='A'? (cur.isDeuce||cur.isTiebreak||cur.pA>=3?1:0) : 0);
+              const lastB = tnState.gB + (side==='B'? (cur.isDeuce||cur.isTiebreak||cur.pB>=3?1:0) : 0);
+              // 더 안전하게: tennisScorePoint 직전의 gA, gB를 next의 setHistory에 추가
+              const sh = [...(tnState.setHistory||[])];
+              // 어느 쪽이 세트승했는지로 결정
+              if(next.sA > tnState.sA){
+                // A가 세트 승 → 마지막 게임 = A 승
+                sh.push({gA: cur.gA + 1, gB: cur.gB});
+              } else {
+                sh.push({gA: cur.gA, gB: cur.gB + 1});
+              }
+              next.setHistory = sh;
+              // 매치 종료 시 firebase 저장
+              if(next.sA >= winSets || next.sB >= winSets){
+                setTnState(next);
+                saveToFirebaseTennis(next, false);
+                return;
+              }
+              // 일반 세트 종료 — 중간 저장
+              setTnState(next);
+              saveToFirebaseTennis(next, false);
+              return;
+            }
+            setTnState(next);
+          } else {
+            // -1: 마지막 포인트 취소 (간단 구현 — 포인트 한 단계 되돌리기)
+            // 정확한 되돌리기는 복잡하므로 일단 현재 포인트만 -1
+            const next = {...tnState};
+            if(next.isTiebreak){
+              if(side==='A' && next.tbA>0) next.tbA--;
+              if(side==='B' && next.tbB>0) next.tbB--;
+            } else if(next.isDeuce){
+              if(side==='A' && next.advA) next.advA = false;
+              else if(side==='B' && next.advB) next.advB = false;
+              else if(!next.advA && !next.advB){
+                // 듀스 → 30-30 으로 (한 명만 한 단계 내림)
+                next.isDeuce = false;
+                if(side==='A') next.pA = 2;
+                if(side==='B') next.pB = 2;
+              }
+            } else {
+              if(side==='A' && next.pA>0) next.pA--;
+              if(side==='B' && next.pB>0) next.pB--;
+            }
+            setTnState(next);
+          }
+          return;
+        }
+        // 일반 종목
         if(side==='A') setScoreA(v=>Math.max(0,v+delta));
         else           setScoreB(v=>Math.max(0,v+delta));
       };
@@ -1638,6 +1900,17 @@
         setCurSet(v=>v+1);
         // 세트 종료 후 Firebase에 중간 저장
         saveToFirebase(newHistory, false);
+      };
+
+      // 🎾 테니스 결과 저장 — setHistory의 게임수로 setScores 변환
+      const saveToFirebaseTennis = async (state, isFinal) => {
+        const sh = state.setHistory || [];
+        // setScores 형식 [{h, a}] 로 변환
+        const setScoresLike = sh.map(s=>({h: s.gA, a: s.gB}));
+        // history 처럼 history-like 사용
+        const histLike = sh.map(s=>({a: s.gA, b: s.gB}));
+        setHistory(histLike);
+        await saveToFirebase(histLike, isFinal);
       };
 
       const saveToFirebase = async (hist, isFinal) => {
@@ -1705,7 +1978,8 @@
       const finishMatch = () => {
         if(!matchOver){alert(`경기가 아직 끝나지 않았습니다.\n현재 ${wonA}:${wonB} (${winSets}세트 선승)`);return;}
         if(!window.confirm('경기를 완전히 종료하고 결과를 저장합니까?'))return;
-        saveToFirebase(history, true);
+        if(tn) saveToFirebaseTennis(tnState, true);
+        else saveToFirebase(history, true);
       };
 
       const getScoreColor=(isA)=>{
@@ -1746,8 +2020,57 @@
             </div>
           </div>
 
-          {/* 메인 — DONIC 스타일: [점수 · 세트 | 세트 · 점수] */}
-          {sm ? (
+          {/* 메인 — 🎾 테니스 / 일반 세트제 / 비세트제 분기 */}
+          {tn ? (
+            /* 🎾 테니스 스코어보드 — [포인트 · 게임 · 세트 | 세트 · 게임 · 포인트] */
+            <div className="flex-1 grid grid-cols-[1fr_auto_auto_auto_auto_1fr] divide-x divide-slate-700 items-stretch">
+              {/* 좌측 포인트 — 거대, 탭하여 +1 */}
+              <button onPointerDown={()=>adjLeft(1)}
+                className={`flex flex-col items-center justify-center py-4 sm:py-6 active:bg-blue-900/40 transition-colors ${matchOver&&leftWon>rightWon?'bg-green-900/15':''}`}>
+                <div className={`font-black tabular-nums leading-none ${getScoreColor(!courtSwapped)}`} style={{fontSize: tnLeftPt==='AD' ? 'min(20vw,14rem)' : 'min(26vw,18rem)'}}>
+                  {tnLeftPt}
+                </div>
+                <div className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest mt-2 sm:mt-4">
+                  {tnState.isTiebreak ? '타이브레이크' : '탭하여 포인트'}
+                </div>
+              </button>
+
+              {/* 좌측 게임수 */}
+              <div className="flex flex-col items-center justify-center px-1.5 sm:px-3 md:px-5 bg-slate-950/30">
+                <p className="text-[9px] sm:text-[11px] font-black text-blue-300/60 uppercase tracking-widest mb-1 sm:mb-2">게임</p>
+                <div className="font-black text-blue-300 tabular-nums leading-none" style={{fontSize:'min(10vw,6rem)'}}>{tnLeftGames}</div>
+              </div>
+
+              {/* 좌측 세트 승수 */}
+              <div className="flex flex-col items-center justify-center px-1.5 sm:px-3 md:px-5 bg-slate-950/60">
+                <p className="text-[9px] sm:text-[11px] font-black text-amber-300/60 uppercase tracking-widest mb-1 sm:mb-2">세트</p>
+                <div className="font-black text-amber-300 tabular-nums leading-none" style={{fontSize:'min(10vw,6rem)'}}>{tnLeftSets}</div>
+              </div>
+
+              {/* 우측 세트 승수 */}
+              <div className="flex flex-col items-center justify-center px-1.5 sm:px-3 md:px-5 bg-slate-950/60">
+                <p className="text-[9px] sm:text-[11px] font-black text-amber-300/60 uppercase tracking-widest mb-1 sm:mb-2">세트</p>
+                <div className="font-black text-amber-300 tabular-nums leading-none" style={{fontSize:'min(10vw,6rem)'}}>{tnRightSets}</div>
+              </div>
+
+              {/* 우측 게임수 */}
+              <div className="flex flex-col items-center justify-center px-1.5 sm:px-3 md:px-5 bg-slate-950/30">
+                <p className="text-[9px] sm:text-[11px] font-black text-blue-300/60 uppercase tracking-widest mb-1 sm:mb-2">게임</p>
+                <div className="font-black text-blue-300 tabular-nums leading-none" style={{fontSize:'min(10vw,6rem)'}}>{tnRightGames}</div>
+              </div>
+
+              {/* 우측 포인트 */}
+              <button onPointerDown={()=>adjRight(1)}
+                className={`flex flex-col items-center justify-center py-4 sm:py-6 active:bg-rose-900/40 transition-colors ${matchOver&&rightWon>leftWon?'bg-green-900/15':''}`}>
+                <div className={`font-black tabular-nums leading-none ${getScoreColor(courtSwapped)}`} style={{fontSize: tnRightPt==='AD' ? 'min(20vw,14rem)' : 'min(26vw,18rem)'}}>
+                  {tnRightPt}
+                </div>
+                <div className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest mt-2 sm:mt-4">
+                  {tnState.isTiebreak ? '타이브레이크' : '탭하여 포인트'}
+                </div>
+              </button>
+            </div>
+          ) : sm ? (
             <div className="flex-1 grid grid-cols-[1fr_auto_auto_1fr] divide-x divide-slate-700 items-stretch">
               {/* 좌측 점수 — 거대, 탭하여 +1 */}
               <button onPointerDown={()=>adjLeft(1)}
@@ -1808,18 +2131,32 @@
           </div>
           {/* 하단 — 세트 히스토리 + 버튼 */}
           <div className="bg-slate-800 px-3 sm:px-6 py-3 sm:py-4 space-y-2 sm:space-y-3 shrink-0">
-            {history.length>0&&(
-              <div className="flex gap-1.5 sm:gap-3 justify-center flex-wrap">
-                {history.map((s,i)=>(
-                  <div key={i} className="text-center bg-slate-900 px-2 sm:px-3 py-1 rounded-lg">
-                    <p className="text-[9px] sm:text-[11px] text-slate-400 font-black uppercase">{i+1}세트</p>
-                    <p className={`text-sm sm:text-lg font-black ${s.a>s.b?'text-green-400':'text-rose-400'}`}>{s.a} : {s.b}</p>
-                  </div>
-                ))}
-              </div>
+            {tn ? (
+              /* 🎾 테니스 히스토리 — 완료된 세트의 게임수 표시 */
+              (tnState.setHistory||[]).length>0&&(
+                <div className="flex gap-1.5 sm:gap-3 justify-center flex-wrap">
+                  {(tnState.setHistory||[]).map((s,i)=>(
+                    <div key={i} className="text-center bg-slate-900 px-2 sm:px-3 py-1 rounded-lg">
+                      <p className="text-[9px] sm:text-[11px] text-slate-400 font-black uppercase">{i+1}세트</p>
+                      <p className={`text-sm sm:text-lg font-black ${s.gA>s.gB?'text-green-400':'text-rose-400'}`}>{s.gA} : {s.gB}</p>
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : (
+              history.length>0&&(
+                <div className="flex gap-1.5 sm:gap-3 justify-center flex-wrap">
+                  {history.map((s,i)=>(
+                    <div key={i} className="text-center bg-slate-900 px-2 sm:px-3 py-1 rounded-lg">
+                      <p className="text-[9px] sm:text-[11px] text-slate-400 font-black uppercase">{i+1}세트</p>
+                      <p className={`text-sm sm:text-lg font-black ${s.a>s.b?'text-green-400':'text-rose-400'}`}>{s.a} : {s.b}</p>
+                    </div>
+                  ))}
+                </div>
+              )
             )}
             <div className="flex gap-2 sm:gap-3">
-              {sm&&!matchOver&&(
+              {sm&&!tn&&!matchOver&&(
                 <button onClick={endSet} disabled={saving}
                   className="flex-1 py-3 sm:py-5 bg-amber-500 text-white rounded-xl sm:rounded-2xl font-black text-base sm:text-lg active:bg-amber-400 active:scale-95 transition-all">
                   {saving?'저장 중...':'✅ 세트 종료'}
@@ -1838,7 +2175,15 @@
     // ================================================================
     //  App — 메인 컴포넌트
     // ================================================================
-    const DEFAULT_CONFIG = { name:'', sport:'soccer', matchType:'team_match', tournamentType:TType.TOURNAMENT, teamFormat:'2D1S', teamRounds:1, sets:3 };
+    const DEFAULT_CONFIG = {
+      name:'', sport:'soccer', matchType:'team_match', tournamentType:TType.TOURNAMENT,
+      teamFormat:'2D1S', teamRounds:1, sets:3,
+      // 🎾 테니스 전용 옵션
+      tennisGamesPerSet: 6,    // 세트당 게임수 (4/6/8)
+      tennisDeuce: false,      // false=노애드 (기본), true=어드밴티지
+      tennisTiebreak: true,    // 6-6 시 타이브레이크 (기본 ON)
+      tennisFinalMatchTb: true // 마지막 세트 매치 타이브레이크 (10점)
+    };
 
     const App = () => {
       const [loading, setLoading]      = useState(true);
@@ -2567,6 +2912,81 @@
                         </div>
                       </div>
                     )}
+
+                    {/* 🎾 테니스 전용 옵션 */}
+                    {isTennis(config.sport)&&(
+                      <div className="space-y-4 bg-amber-50 p-4 rounded-2xl border-2 border-amber-200">
+                        <label className="text-[12px] font-black text-amber-700 uppercase tracking-widest">🎾 테니스 점수 규칙</label>
+
+                        {/* 세트당 게임수 */}
+                        <div className="space-y-2">
+                          <p className="text-sm font-black text-slate-700">세트당 게임수</p>
+                          <div className="grid grid-cols-3 gap-2">
+                            {TENNIS_GAMES_OPTIONS.map(o=>(
+                              <button key={o.value} onClick={()=>setConfig({...config,tennisGamesPerSet:o.value})}
+                                className={`p-3 rounded-xl border-2 text-center transition-all ${(config.tennisGamesPerSet||6)===o.value?'border-amber-500 bg-amber-100 text-amber-800':'border-slate-100 bg-white text-slate-500 hover:border-amber-300'}`}>
+                                <p className="font-black text-sm">{o.label}</p>
+                                <p className="text-[11px] text-slate-400 mt-0.5">{o.sub}</p>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* 듀스 / 노애드 */}
+                        <div className="space-y-2">
+                          <p className="text-sm font-black text-slate-700">듀스 방식</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button onClick={()=>setConfig({...config,tennisDeuce:false})}
+                              className={`p-3 rounded-xl border-2 text-center transition-all ${!config.tennisDeuce?'border-amber-500 bg-amber-100 text-amber-800':'border-slate-100 bg-white text-slate-500 hover:border-amber-300'}`}>
+                              <p className="font-black text-sm">노애드 (기본)</p>
+                              <p className="text-[11px] text-slate-400 mt-0.5">40-40 → 다음 1점 승</p>
+                            </button>
+                            <button onClick={()=>setConfig({...config,tennisDeuce:true})}
+                              className={`p-3 rounded-xl border-2 text-center transition-all ${config.tennisDeuce?'border-amber-500 bg-amber-100 text-amber-800':'border-slate-100 bg-white text-slate-500 hover:border-amber-300'}`}>
+                              <p className="font-black text-sm">어드밴티지</p>
+                              <p className="text-[11px] text-slate-400 mt-0.5">정석 듀스 룰</p>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* 타이브레이크 */}
+                        <div className="space-y-2">
+                          <p className="text-sm font-black text-slate-700">타이브레이크</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button onClick={()=>setConfig({...config,tennisTiebreak:true})}
+                              className={`p-3 rounded-xl border-2 text-center transition-all ${config.tennisTiebreak!==false?'border-amber-500 bg-amber-100 text-amber-800':'border-slate-100 bg-white text-slate-500 hover:border-amber-300'}`}>
+                              <p className="font-black text-sm">사용 (기본)</p>
+                              <p className="text-[11px] text-slate-400 mt-0.5">6-6 → 7점 타이브레이크</p>
+                            </button>
+                            <button onClick={()=>setConfig({...config,tennisTiebreak:false})}
+                              className={`p-3 rounded-xl border-2 text-center transition-all ${config.tennisTiebreak===false?'border-amber-500 bg-amber-100 text-amber-800':'border-slate-100 bg-white text-slate-500 hover:border-amber-300'}`}>
+                              <p className="font-black text-sm">미사용</p>
+                              <p className="text-[11px] text-slate-400 mt-0.5">7-5까지 진행</p>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* 마지막 세트 매치 타이브레이크 (3세트 이상일 때만) */}
+                        {(config.sets||3)>=3&&(
+                          <div className="space-y-2">
+                            <p className="text-sm font-black text-slate-700">마지막 세트 룰</p>
+                            <div className="grid grid-cols-2 gap-2">
+                              <button onClick={()=>setConfig({...config,tennisFinalMatchTb:true})}
+                                className={`p-3 rounded-xl border-2 text-center transition-all ${config.tennisFinalMatchTb!==false?'border-amber-500 bg-amber-100 text-amber-800':'border-slate-100 bg-white text-slate-500 hover:border-amber-300'}`}>
+                                <p className="font-black text-sm">매치 타이브레이크</p>
+                                <p className="text-[11px] text-slate-400 mt-0.5">마지막 세트 10점</p>
+                              </button>
+                              <button onClick={()=>setConfig({...config,tennisFinalMatchTb:false})}
+                                className={`p-3 rounded-xl border-2 text-center transition-all ${config.tennisFinalMatchTb===false?'border-amber-500 bg-amber-100 text-amber-800':'border-slate-100 bg-white text-slate-500 hover:border-amber-300'}`}>
+                                <p className="font-black text-sm">동일하게</p>
+                                <p className="text-[11px] text-slate-400 mt-0.5">다른 세트와 같음</p>
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     <button onClick={()=>setStep(2)} className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black text-xl hover:bg-slate-800 transition-all">다음 단계로</button>
                   </section>
                 )}
