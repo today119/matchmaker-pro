@@ -3,17 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>MatchMaker ⚡</title>
+  <title>MatchMaker Pro ⚡</title>
 
   <!-- ✅ PWA 설정 -->
   <link rel="manifest" href="./manifest.json">
-  <meta name="theme-color" content="#1e293b">
-  <meta name="description" content="스포츠 대회·수행평가·리그 운영을 위한 토너먼트 관리 도구">
+  <meta name="theme-color" content="#4c1d95">
+  <meta name="description" content="MatchMaker Pro — 스포츠 대회·수행평가·리그 운영을 위한 토너먼트 관리 도구">
 
   <!-- iOS / 사파리 — PWA로 인식되게 -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="MatchMaker">
+  <meta name="apple-mobile-web-app-title" content="MatchMaker Pro">
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
 
   <!-- 파비콘 -->
@@ -53,23 +53,25 @@
 
     // GAS Web App URL — 구글 시트 연동(명단/결과 내보내기)에만 사용
     // ⚠️ 본인의 GAS 배포 URL(/exec)로 교체하세요. 비워두면 시트 연동 버튼 사용 시 오류.
-    window.GAS_API_URL = 'https://script.google.com/macros/s/AKfycby67sCLXV76iFTar4JseutSZLUsy-XMbhoNlsXeGul8YQtPgRoWEGTopMcxR7CMzVM4/exec';
+    // GAS_API_URL — 시트 내보내기 기능용. 빈 문자열이면 버튼 숨김
+    window.GAS_API_URL = '';
   </script>
 
   <script type="text/babel" data-presets="react">
     const { useState, useEffect, useRef, useCallback } = React;
 
     // ================================================================
-    //  ⚠️ Firebase 설정 — 본인의 Firebase 프로젝트 값으로 교체하세요
+    //  Firebase 설정 — MatchMaker Pro
     // ================================================================
     const FIREBASE_CONFIG = {
-      apiKey:            "AIzaSyBWAAeuN_bwwrY2R1NupXLwT4ECPhyivo0",
-      authDomain:        "matchmaker-28187.firebaseapp.com",
-      databaseURL:       "https://matchmaker-28187-default-rtdb.asia-southeast1.firebasedatabase.app",
-      projectId:         "matchmaker-28187",
-      storageBucket:     "matchmaker-28187.firebasestorage.app",
-      messagingSenderId: "640935869730",
-      appId:             "1:640935869730:web:893abadb93ae3e949df97b"
+      apiKey:            "AIzaSyBNT1g3ipZJNjrpQB24kolH5LukqpVf500",
+      authDomain:        "matchmaker-pro-90a1b.firebaseapp.com",
+      databaseURL:       "https://matchmaker-pro-90a1b-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId:         "matchmaker-pro-90a1b",
+      storageBucket:     "matchmaker-pro-90a1b.firebasestorage.app",
+      messagingSenderId: "370324159370",
+      appId:             "1:370324159370:web:a590fc3cae3a2a1d26a673",
+      measurementId:     "G-8FKB164RQX"
     };
     if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
     const db = firebase.database();
@@ -77,7 +79,7 @@
     // ================================================================
     //  Firebase 데이터 함수 + localStorage 백업
     // ================================================================
-    const LS_KEY = 'matchmaker_tournaments';
+    const LS_KEY = 'matchmaker_pro_tournaments';
 
     // localStorage 헬퍼
     const lsGetAll = () => {
@@ -542,29 +544,44 @@
             <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">Match Schedule</h3>
             <span className="text-[12px] font-black text-slate-400 bg-slate-100 px-2 py-0.5 rounded">총 {n}경기 · {rounds.length}라운드</span>
             <div className="h-0.5 flex-1 bg-slate-100"></div>
-            {onAddRound&&(
-              <button onClick={()=>{
-                if(window.confirm(`새 라운드(${rounds.length+1}라운드)를 추가합니다.\n참가자가 셔플된 새 대진으로 생성됩니다.\n계속하시겠습니까?`)) onAddRound();
-              }} className="text-[13px] font-black bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg">
-                ➕ 라운드 추가
-              </button>
-            )}
+            {onAddRound&&(()=>{
+              const activeCount = (rounds||[]).length>0
+                ? (rounds[0].matches||[]).filter(m=>!m.home.id.startsWith('bye')&&!m.away.id.startsWith('bye')).length * 2 + (rounds[0].matches||[]).filter(m=>m.home.id.startsWith('bye')||m.away.id.startsWith('bye')).length
+                : 0;
+              const perRound = Math.floor(activeCount/2);
+              const fullCycle = activeCount > 1 ? activeCount-1 : 1;
+              return (
+                <button onClick={()=>{
+                  const choice = window.prompt(
+                    `라운드 추가 방식을 선택하세요:\n\n` +
+                    `1 = 셔플 한 라운드 (${perRound}경기, 새 대진)\n` +
+                    `2 = 풀리그 1바퀴 추가 (${fullCycle}라운드 ${perRound*fullCycle}경기, 모두 vs 모두)\n\n` +
+                    `숫자를 입력하세요 (1 또는 2)`,
+                    '1'
+                  );
+                  if(choice==='1') onAddRound('shuffle');
+                  else if(choice==='2') onAddRound('roundrobin');
+                }} className="text-[13px] font-black bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg">
+                  ➕ 라운드 추가
+                </button>
+              );
+            })()}
             <button onClick={()=>setCollapsed(c=>!c)} className="text-[13px] font-black bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg">
               {collapsed?'▼ 펼치기':'▲ 접기'}
             </button>
           </div>
           {!collapsed&&(
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-              {rounds.map(round=>(
-                <div key={round.roundNumber} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {rounds.map((round, ri)=>(
+                <div key={`r${ri}-${round.roundNumber}`} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
                   <div className="bg-slate-800 px-4 py-2.5 flex justify-between items-center">
                     <h4 className="font-bold text-white text-[12px] uppercase tracking-[0.2em]">라운드 {round.roundNumber}</h4>
                     <div className="w-1.5 h-1.5 rounded-full bg-slate-600"></div>
                   </div>
                   <div className="p-3 space-y-2 flex-1">
-                    {round.matches.map(m=>{
+                    {round.matches.map((m, mi)=>{
                       const bye=m.home.id.startsWith('bye')||m.away.id.startsWith('bye');
-                      if(bye) return <div key={m.id} className="text-center py-2 px-3 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-[12px] font-bold text-slate-400 italic">{m.home.id.startsWith('bye')?m.away.name:m.home.name} 휴식</div>;
+                      if(bye) return <div key={`bye-${ri}-${mi}`} className="text-center py-2 px-3 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-[12px] font-bold text-slate-400 italic">{m.home.id.startsWith('bye')?m.away.name:m.home.name} 휴식</div>;
                       const done=m.status==='completed';
                       const matchNo=matchNumbers[m.id];
                       const hasAbsent=m.home.absent||m.away.absent;
@@ -574,20 +591,20 @@
                             ? 'bg-slate-50 border-slate-100 hover:border-blue-200'
                             : 'bg-white border-slate-200 shadow-sm hover:border-blue-400 hover:shadow-md');
                       return (
-                        <div key={m.id} className="flex gap-1.5 items-stretch">
+                        <div key={`r${ri}-m${mi}-${m.id}`} className="flex gap-1.5 items-stretch">
                           <span className={`w-9 shrink-0 rounded-lg flex items-center justify-center text-base font-black ${hasAbsent?'bg-amber-400 text-white':'bg-blue-600 text-white'}`}>{matchNo}</span>
                           <button onClick={()=>onMatchClick(m)}
-                            className={`flex-1 flex items-center justify-between text-base p-2.5 rounded-xl border transition-all group ${baseColor}`}>
-                            <span className={`flex-1 font-black text-left truncate flex items-center gap-1 ${done&&(m.scoreHome||0)>(m.scoreAway||0)?'text-blue-700':'text-slate-800'}`}>
-                              {m.home.absent&&<span className="text-[11px] bg-amber-500 text-white px-1 rounded">결</span>}
-                              {m.home.name}
+                            className={`flex-1 min-w-0 flex items-center justify-between gap-1 text-base p-2.5 rounded-xl border transition-all group ${baseColor}`}>
+                            <span className={`flex-1 min-w-0 font-black text-left truncate flex items-center gap-1 ${done&&(m.scoreHome||0)>(m.scoreAway||0)?'text-blue-700':'text-slate-800'}`}>
+                              {m.home.absent&&<span className="text-[11px] bg-amber-500 text-white px-1 rounded shrink-0">결</span>}
+                              <span className="truncate">{m.home.name}</span>
                             </span>
-                            <div className="px-2 min-w-[60px] flex justify-center">
-                              {done?<span className="font-black text-slate-900 bg-white border border-slate-100 px-2 py-0.5 rounded shadow-sm text-base">{m.scoreHome} : {m.scoreAway}</span>:<span className="text-sm text-slate-300 font-black italic group-hover:text-blue-400">VS</span>}
+                            <div className="px-1 sm:px-2 shrink-0 flex justify-center">
+                              {done?<span className="font-black text-slate-900 bg-white border border-slate-100 px-2 py-0.5 rounded shadow-sm text-sm">{m.scoreHome} : {m.scoreAway}</span>:<span className="text-sm text-slate-300 font-black italic group-hover:text-blue-400">VS</span>}
                             </div>
-                            <span className={`flex-1 font-black text-right truncate flex items-center gap-1 justify-end ${done&&(m.scoreAway||0)>(m.scoreHome||0)?'text-blue-700':'text-slate-800'}`}>
-                              {m.away.name}
-                              {m.away.absent&&<span className="text-[11px] bg-amber-500 text-white px-1 rounded">결</span>}
+                            <span className={`flex-1 min-w-0 font-black text-right truncate flex items-center gap-1 justify-end ${done&&(m.scoreAway||0)>(m.scoreHome||0)?'text-blue-700':'text-slate-800'}`}>
+                              <span className="truncate">{m.away.name}</span>
+                              {m.away.absent&&<span className="text-[11px] bg-amber-500 text-white px-1 rounded shrink-0">결</span>}
                             </span>
                           </button>
                           {onScoreboardLink&&(
@@ -727,13 +744,27 @@
           <div className="flex items-center justify-between border-b border-slate-100 pb-1 flex-wrap gap-1">
             <p className="text-[12px] font-black text-slate-400 uppercase tracking-widest">Match Schedule · 총 {n}경기 · {(group.rounds||[]).length}R</p>
             <div className="flex gap-1">
-              {onAddRound&&(
-                <button onClick={()=>{
-                  if(window.confirm(`${group.name}에 새 라운드를 추가합니다.\n참가자가 셔플된 새 대진으로 생성됩니다.\n계속하시겠습니까?`)) onAddRound(group.id);
-                }} className="text-[12px] font-black bg-blue-600 hover:bg-blue-700 text-white px-2 py-0.5 rounded">
-                  ➕ 라운드
-                </button>
-              )}
+              {onAddRound&&(()=>{
+                const activeP = (group.participants||[]).filter(p=>p&&!p.id.startsWith('bye'));
+                const n = activeP.length;
+                const perRound = Math.floor(n/2);
+                const fullCycle = n > 1 ? n-1 : 1;
+                return (
+                  <button onClick={()=>{
+                    const choice = window.prompt(
+                      `${group.name}에 라운드를 추가합니다:\n\n` +
+                      `1 = 셔플 한 라운드 (${perRound}경기, 새 대진)\n` +
+                      `2 = 풀리그 1바퀴 추가 (${fullCycle}라운드 ${perRound*fullCycle}경기, 모두 vs 모두)\n\n` +
+                      `숫자를 입력하세요 (1 또는 2)`,
+                      '1'
+                    );
+                    if(choice==='1') onAddRound(group.id, 'shuffle');
+                    else if(choice==='2') onAddRound(group.id, 'roundrobin');
+                  }} className="text-[12px] font-black bg-blue-600 hover:bg-blue-700 text-white px-2 py-0.5 rounded">
+                    ➕ 라운드
+                  </button>
+                );
+              })()}
               <button onClick={()=>setCollapsed(c=>!c)} className="text-[12px] font-black bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-0.5 rounded">
                 {collapsed?'▼ 펼치기':'▲ 접기'}
               </button>
@@ -741,7 +772,7 @@
           </div>
           {!collapsed&&(
             <div className="space-y-1.5">
-              {(group.rounds||[]).map(r=>r.matches.map(m=>{
+              {(group.rounds||[]).map((r,ri)=>r.matches.map((m,mi)=>{
                 if(m.home.id.startsWith('bye')||m.away.id.startsWith('bye')) return null;
                 const done=m.status==='completed';
                 const matchNo=matchNumbers[m.id];
@@ -750,7 +781,7 @@
                   ? 'bg-amber-50 border-amber-300'
                   : (done?'bg-slate-50 border-slate-100':'bg-white border-slate-100 shadow-sm');
                 return (
-                  <div key={m.id} className="flex gap-1 items-stretch">
+                  <div key={`r${ri}-m${mi}-${m.id}`} className="flex gap-1 items-stretch">
                     <span className={`w-8 shrink-0 rounded flex items-center justify-center text-base font-black ${hasAbsent?'bg-amber-400 text-white':'bg-blue-600 text-white'}`}>{matchNo}</span>
                     <button onClick={()=>onMatchClick(m,group.id)}
                       className={`flex-1 flex justify-between items-center px-2.5 py-2 rounded-lg text-base transition-all hover:brightness-95 border ${baseColor}`}>
@@ -804,31 +835,31 @@
       };
       if(!match.participant1&&!match.participant2) return null;
       return (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
-            <div className="bg-slate-900 p-6 text-white flex justify-between items-center shrink-0">
-              <h3 className="text-xl font-black italic uppercase">Enter Score {isTeam&&`(${tf?.name})`}</h3>
-              <button onClick={onClose} className="text-slate-400 hover:text-white">닫기</button>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4">
+          <div className="bg-white rounded-2xl sm:rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden max-h-[95vh] flex flex-col">
+            <div className="bg-slate-900 p-4 sm:p-6 text-white flex justify-between items-center shrink-0">
+              <h3 className="text-base sm:text-xl font-black italic uppercase">Enter Score {isTeam&&`(${tf?.name})`}</h3>
+              <button onClick={onClose} className="text-slate-400 hover:text-white text-sm sm:text-base">닫기</button>
             </div>
-            <div className="p-8 space-y-8 overflow-y-auto custom-scrollbar">
+            <div className="p-4 sm:p-8 space-y-4 sm:space-y-8 overflow-y-auto custom-scrollbar">
               {isTeam&&(
-                <div className="space-y-6 bg-slate-50 p-6 rounded-2xl border border-slate-100">
+                <div className="space-y-4 sm:space-y-6 bg-slate-50 p-3 sm:p-6 rounded-xl sm:rounded-2xl border border-slate-100">
                   <div className="flex justify-between items-center">
-                    <h4 className="font-black text-slate-900 text-base italic">Detailed Match Results</h4>
-                    <button onClick={applyTeam} className="text-[12px] font-black bg-blue-600 text-white px-3 py-1 rounded-full hover:bg-blue-700">결과 자동 반영</button>
+                    <h4 className="font-black text-slate-900 text-sm sm:text-base italic">Detailed Match Results</h4>
+                    <button onClick={applyTeam} className="text-[11px] sm:text-[12px] font-black bg-blue-600 text-white px-2 sm:px-3 py-1 rounded-full hover:bg-blue-700">결과 자동 반영</button>
                   </div>
                   {sub.map((round,ri)=>(
-                    <div key={ri} className="space-y-3">
-                      {nr>1&&<p className="text-[12px] font-black text-slate-400 uppercase">Round {ri+1}</p>}
+                    <div key={ri} className="space-y-2 sm:space-y-3">
+                      {nr>1&&<p className="text-[11px] sm:text-[12px] font-black text-slate-400 uppercase">Round {ri+1}</p>}
                       {round.map((m,mi)=>(
-                        <div key={mi} className="flex items-center gap-4 bg-white p-3 rounded-xl border border-slate-100 shadow-sm">
-                          <span className="text-[12px] font-bold text-slate-400 w-12">Match {mi+1}</span>
-                          <div className="flex-1 flex items-center justify-between gap-2">
-                            <span className="text-sm font-bold text-slate-600 truncate max-w-[80px]">{match.participant1?.name}</span>
-                            <input type="number" value={m.s1} onChange={e=>{const ns=[...sub];ns[ri][mi].s1=parseInt(e.target.value)||0;setSub(ns);}} className="w-12 text-center font-black border rounded p-1 text-base"/>
-                            <span className="text-[12px] font-black text-slate-300 italic">VS</span>
-                            <input type="number" value={m.s2} onChange={e=>{const ns=[...sub];ns[ri][mi].s2=parseInt(e.target.value)||0;setSub(ns);}} className="w-12 text-center font-black border rounded p-1 text-base"/>
-                            <span className="text-sm font-bold text-slate-600 truncate max-w-[80px]">{match.participant2?.name}</span>
+                        <div key={mi} className="flex items-center gap-2 sm:gap-4 bg-white p-2 sm:p-3 rounded-xl border border-slate-100 shadow-sm">
+                          <span className="text-[10px] sm:text-[12px] font-bold text-slate-400 w-10 sm:w-12 shrink-0">M{mi+1}</span>
+                          <div className="flex-1 flex items-center justify-between gap-1 sm:gap-2">
+                            <span className="text-xs sm:text-sm font-bold text-slate-600 truncate flex-1 min-w-0">{match.participant1?.name}</span>
+                            <input type="number" value={m.s1} onChange={e=>{const ns=[...sub];ns[ri][mi].s1=parseInt(e.target.value)||0;setSub(ns);}} className="w-10 sm:w-12 text-center font-black border rounded p-1 text-sm sm:text-base shrink-0"/>
+                            <span className="text-[10px] sm:text-[12px] font-black text-slate-300 italic shrink-0">VS</span>
+                            <input type="number" value={m.s2} onChange={e=>{const ns=[...sub];ns[ri][mi].s2=parseInt(e.target.value)||0;setSub(ns);}} className="w-10 sm:w-12 text-center font-black border rounded p-1 text-sm sm:text-base shrink-0"/>
+                            <span className="text-xs sm:text-sm font-bold text-slate-600 truncate flex-1 min-w-0 text-right">{match.participant2?.name}</span>
                           </div>
                         </div>
                       ))}
@@ -836,22 +867,22 @@
                   ))}
                 </div>
               )}
-              <div className="grid grid-cols-2 gap-8 items-center">
+              <div className="grid grid-cols-2 gap-3 sm:gap-8 items-center">
                 {[{p:match.participant1,s:s1,setS:setS1,col:'blue'},{p:match.participant2,s:s2,setS:setS2,col:'rose'}].map((side,i)=>(
-                  <div key={i} className="text-center space-y-4">
-                    <div className={`w-16 h-16 bg-${side.col}-100 text-${side.col}-600 rounded-2xl flex items-center justify-center text-2xl mx-auto`}>{side.p?.name.substring(0,1)||'?'}</div>
-                    <p className="font-bold text-slate-800 truncate">{side.p?.name||'TBD'}</p>
+                  <div key={i} className="text-center space-y-2 sm:space-y-4">
+                    <div className={`w-12 h-12 sm:w-16 sm:h-16 bg-${side.col}-100 text-${side.col}-600 rounded-xl sm:rounded-2xl flex items-center justify-center text-xl sm:text-2xl mx-auto`}>{side.p?.name.substring(0,1)||'?'}</div>
+                    <p className="font-bold text-slate-800 truncate text-sm sm:text-base">{side.p?.name||'TBD'}</p>
                     <div className="flex flex-col items-center">
-                      <input type="number" value={side.s} onChange={e=>side.setS(parseInt(e.target.value)||0)} className={`w-full text-center text-3xl font-black py-3 border-2 border-slate-100 rounded-xl focus:border-${side.col}-500 outline-none`}/>
-                      <span className="text-[12px] font-black text-slate-400 mt-1 uppercase">{isTeam?'Rounds Won':'Score'}</span>
+                      <input type="number" value={side.s} onChange={e=>side.setS(parseInt(e.target.value)||0)} className={`w-full text-center text-2xl sm:text-3xl font-black py-2 sm:py-3 border-2 border-slate-100 rounded-xl focus:border-${side.col}-500 outline-none`}/>
+                      <span className="text-[11px] sm:text-[12px] font-black text-slate-400 mt-1 uppercase">{isTeam?'Rounds Won':'Score'}</span>
                     </div>
                   </div>
                 ))}
               </div>
-              <div className="flex flex-col gap-3">
-                <button onClick={handleSave} className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black text-lg shadow-lg hover:bg-blue-700">결과 확정</button>
-                {match.status==='completed'&&<button onClick={()=>onSave(match.id,0,0,'',true)} className="w-full py-3 bg-red-50 text-red-500 rounded-xl font-bold hover:bg-red-100">결과 초기화</button>}
-                <button onClick={onClose} className="w-full py-3 text-slate-400 font-bold">취소</button>
+              <div className="flex flex-col gap-2 sm:gap-3">
+                <button onClick={handleSave} className="w-full py-3 sm:py-4 bg-blue-600 text-white rounded-xl sm:rounded-2xl font-black text-base sm:text-lg shadow-lg hover:bg-blue-700">결과 확정</button>
+                {match.status==='completed'&&<button onClick={()=>onSave(match.id,0,0,'',true)} className="w-full py-2.5 sm:py-3 bg-red-50 text-red-500 rounded-xl font-bold hover:bg-red-100 text-sm sm:text-base">결과 초기화</button>}
+                <button onClick={onClose} className="w-full py-2.5 sm:py-3 text-slate-400 font-bold text-sm sm:text-base">취소</button>
               </div>
             </div>
           </div>
@@ -980,34 +1011,34 @@
       };
 
       return (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2rem] w-full max-w-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
-            <div className="bg-slate-800 p-6 text-white text-center shrink-0">
-              <p className="text-[12px] font-black text-slate-400 uppercase tracking-widest mb-1">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-md z-[100] flex items-center justify-center p-2 sm:p-4">
+          <div className="bg-white rounded-2xl sm:rounded-[2rem] w-full max-w-2xl shadow-2xl overflow-hidden max-h-[95vh] flex flex-col">
+            <div className="bg-slate-800 p-4 sm:p-6 text-white text-center shrink-0">
+              <p className="text-[10px] sm:text-[12px] font-black text-slate-400 uppercase tracking-widest mb-1">
                 League Match {isTeam&&`(${tf?.name})`}
                 {isSets&&` · ${totalSets===1?'단판제':`${totalSets}판 ${winSets}선승`}`}
               </p>
-              <h3 className="text-xl font-black italic">점수 입력</h3>
+              <h3 className="text-lg sm:text-xl font-black italic">점수 입력</h3>
             </div>
-            <div className="p-8 space-y-6 overflow-y-auto custom-scrollbar">
+            <div className="p-4 sm:p-8 space-y-4 sm:space-y-6 overflow-y-auto custom-scrollbar">
               {isTeam&&(
-                <div className="space-y-6 bg-slate-50 p-6 rounded-2xl border border-slate-100">
+                <div className="space-y-4 sm:space-y-6 bg-slate-50 p-3 sm:p-6 rounded-xl sm:rounded-2xl border border-slate-100">
                   <div className="flex justify-between items-center">
-                    <h4 className="font-black text-slate-900 text-base italic">Detailed Match Results</h4>
-                    <button onClick={applyTeam} className="text-[12px] font-black bg-blue-600 text-white px-3 py-1 rounded-full hover:bg-blue-700">결과 자동 반영</button>
+                    <h4 className="font-black text-slate-900 text-sm sm:text-base italic">Detailed Match Results</h4>
+                    <button onClick={applyTeam} className="text-[11px] sm:text-[12px] font-black bg-blue-600 text-white px-2 sm:px-3 py-1 rounded-full hover:bg-blue-700">결과 자동 반영</button>
                   </div>
                   {sub.map((round,ri)=>(
-                    <div key={ri} className="space-y-3">
-                      {nr>1&&<p className="text-[12px] font-black text-slate-400 uppercase">Round {ri+1}</p>}
+                    <div key={ri} className="space-y-2 sm:space-y-3">
+                      {nr>1&&<p className="text-[11px] sm:text-[12px] font-black text-slate-400 uppercase">Round {ri+1}</p>}
                       {round.map((m,mi)=>(
-                        <div key={mi} className="flex items-center gap-4 bg-white p-3 rounded-xl border border-slate-100 shadow-sm">
-                          <span className="text-[12px] font-bold text-slate-400 w-12">Match {mi+1}</span>
-                          <div className="flex-1 flex items-center justify-between gap-2">
-                            <span className="text-sm font-bold text-slate-600 truncate max-w-[80px]">{match.home.name}</span>
-                            <input type="number" inputMode="numeric" value={m.s1} onFocus={e=>e.target.select()} onChange={e=>{const ns=[...sub];ns[ri][mi].s1=e.target.value;setSub(ns);}} className="w-12 text-center font-black border rounded p-1 text-base"/>
-                            <span className="text-[12px] font-black text-slate-300 italic">VS</span>
-                            <input type="number" inputMode="numeric" value={m.s2} onFocus={e=>e.target.select()} onChange={e=>{const ns=[...sub];ns[ri][mi].s2=e.target.value;setSub(ns);}} className="w-12 text-center font-black border rounded p-1 text-base"/>
-                            <span className="text-sm font-bold text-slate-600 truncate max-w-[80px]">{match.away.name}</span>
+                        <div key={mi} className="flex items-center gap-2 sm:gap-4 bg-white p-2 sm:p-3 rounded-xl border border-slate-100 shadow-sm">
+                          <span className="text-[10px] sm:text-[12px] font-bold text-slate-400 w-10 sm:w-12 shrink-0">M{mi+1}</span>
+                          <div className="flex-1 flex items-center justify-between gap-1 sm:gap-2">
+                            <span className="text-xs sm:text-sm font-bold text-slate-600 truncate flex-1 min-w-0">{match.home.name}</span>
+                            <input type="number" inputMode="numeric" value={m.s1} onFocus={e=>e.target.select()} onChange={e=>{const ns=[...sub];ns[ri][mi].s1=e.target.value;setSub(ns);}} className="w-10 sm:w-12 text-center font-black border rounded p-1 text-sm sm:text-base shrink-0"/>
+                            <span className="text-[10px] sm:text-[12px] font-black text-slate-300 italic shrink-0">VS</span>
+                            <input type="number" inputMode="numeric" value={m.s2} onFocus={e=>e.target.select()} onChange={e=>{const ns=[...sub];ns[ri][mi].s2=e.target.value;setSub(ns);}} className="w-10 sm:w-12 text-center font-black border rounded p-1 text-sm sm:text-base shrink-0"/>
+                            <span className="text-xs sm:text-sm font-bold text-slate-600 truncate flex-1 min-w-0 text-right">{match.away.name}</span>
                           </div>
                         </div>
                       ))}
@@ -1017,12 +1048,12 @@
               )}
 
               {isSets ? (
-                /* 세트제 점수 입력 */
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between text-sm font-black text-slate-500 px-2">
-                    <span className="flex-1 text-center truncate">{match.home.name}</span>
-                    <span className="w-16 text-center text-slate-300">vs</span>
-                    <span className="flex-1 text-center truncate">{match.away.name}</span>
+                /* 세트제 점수 입력 — 모바일 최적화 */
+                <div className="space-y-3 sm:space-y-4">
+                  <div className="grid grid-cols-[1fr_auto_1fr] items-center text-sm sm:text-base font-black text-slate-700 px-1 gap-2">
+                    <span className="text-center truncate">{match.home.name}</span>
+                    <span className="text-slate-300 text-xs sm:text-sm">vs</span>
+                    <span className="text-center truncate">{match.away.name}</span>
                   </div>
                   <div className="space-y-2">
                     {setRows.map((row, idx)=>{
@@ -1031,18 +1062,17 @@
                       const homeWin = valid && h>a;
                       const awayWin = valid && a>h;
                       return (
-                        <div key={idx} className="flex items-center gap-3 bg-slate-50 p-3 rounded-xl border border-slate-100">
-                          <span className="text-[12px] font-black text-slate-400 uppercase w-10">SET {idx+1}</span>
+                        <div key={idx} className="grid grid-cols-[36px_1fr_16px_1fr] sm:grid-cols-[44px_1fr_24px_1fr] items-center gap-1.5 sm:gap-3 bg-slate-50 p-2 sm:p-3 rounded-xl border border-slate-100">
+                          <span className="text-[10px] sm:text-[12px] font-black text-slate-400 uppercase text-center leading-tight">SET<br/>{idx+1}</span>
                           <input type="number" inputMode="numeric" value={row.h} onFocus={e=>e.target.select()}
                             onChange={e=>updateSetRow(idx,'h',e.target.value)}
                             placeholder="0"
-                            className={`flex-1 text-center text-2xl font-black py-2 border-b-2 outline-none transition-colors ${homeWin?'border-blue-500 text-blue-700 bg-blue-50':'border-slate-200 focus:border-blue-300'}`}/>
-                          <span className="text-slate-300 font-black">:</span>
+                            className={`w-full text-center text-xl sm:text-2xl font-black py-1.5 sm:py-2 border-b-2 outline-none transition-colors min-w-0 ${homeWin?'border-blue-500 text-blue-700 bg-blue-50':'border-slate-200 focus:border-blue-300'}`}/>
+                          <span className="text-slate-300 font-black text-center text-sm sm:text-base">:</span>
                           <input type="number" inputMode="numeric" value={row.a} onFocus={e=>e.target.select()}
                             onChange={e=>updateSetRow(idx,'a',e.target.value)}
                             placeholder="0"
-                            className={`flex-1 text-center text-2xl font-black py-2 border-b-2 outline-none transition-colors ${awayWin?'border-rose-500 text-rose-700 bg-rose-50':'border-slate-200 focus:border-rose-300'}`}/>
-                          <span className="w-10 shrink-0" aria-hidden="true"></span>
+                            className={`w-full text-center text-xl sm:text-2xl font-black py-1.5 sm:py-2 border-b-2 outline-none transition-colors min-w-0 ${awayWin?'border-rose-500 text-rose-700 bg-rose-50':'border-slate-200 focus:border-rose-300'}`}/>
                         </div>
                       );
                     })}
@@ -1052,33 +1082,44 @@
                     const {wh, wa} = computedFromSets();
                     const winner = wh>=winSets ? 'home' : wa>=winSets ? 'away' : null;
                     return (
-                      <div className="flex items-center justify-between bg-slate-900 text-white p-4 rounded-2xl">
-                        <span className={`flex-1 text-center font-black text-lg ${winner==='home'?'text-green-400':''}`}>{wh}</span>
-                        <span className="text-slate-500 text-sm uppercase font-black">세트 승수</span>
-                        <span className={`flex-1 text-center font-black text-lg ${winner==='away'?'text-green-400':''}`}>{wa}</span>
+                      <div className="grid grid-cols-[1fr_auto_1fr] items-center bg-slate-900 text-white p-3 sm:p-4 rounded-xl sm:rounded-2xl gap-2">
+                        <span className={`text-center font-black text-base sm:text-lg ${winner==='home'?'text-green-400':''}`}>{wh}</span>
+                        <span className="text-slate-500 text-[10px] sm:text-xs uppercase font-black whitespace-nowrap px-2">세트 승수</span>
+                        <span className={`text-center font-black text-base sm:text-lg ${winner==='away'?'text-green-400':''}`}>{wa}</span>
                       </div>
                     );
                   })()}
                 </div>
               ) : (
                 /* 일반 점수 입력 (축구/농구 등) */
-                <div className="flex items-center justify-between gap-4">
+                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 sm:gap-4">
                   {[{p:match.home,s:s1,setS:setS1},{p:match.away,s:s2,setS:setS2}].map((side,i)=>(
-                    <div key={i} className="flex-1 text-center space-y-3">
-                      <div className="text-sm font-black text-slate-500 truncate uppercase">{side.p.name}</div>
-                      <input type="number" inputMode="numeric" value={side.s} onFocus={e=>e.target.select()} onChange={e=>side.setS(e.target.value)} className="w-full text-center text-4xl font-black py-4 border-b-4 border-slate-100 focus:border-blue-500 outline-none"/>
-                      <span className="text-[12px] font-black text-slate-400 uppercase">{isTeam?'Rounds Won':'Score'}</span>
-                    </div>
+                    <React.Fragment key={i}>
+                      {i===0&&(
+                        <div className="text-center space-y-2 sm:space-y-3 min-w-0">
+                          <div className="text-xs sm:text-sm font-black text-slate-500 truncate uppercase">{side.p.name}</div>
+                          <input type="number" inputMode="numeric" value={side.s} onFocus={e=>e.target.select()} onChange={e=>side.setS(e.target.value)} className="w-full text-center text-3xl sm:text-4xl font-black py-3 sm:py-4 border-b-4 border-slate-100 focus:border-blue-500 outline-none"/>
+                          <span className="text-[11px] sm:text-[12px] font-black text-slate-400 uppercase">{isTeam?'Rounds Won':'Score'}</span>
+                        </div>
+                      )}
+                      {i===0&&<div className="text-xl sm:text-2xl font-black text-slate-200">:</div>}
+                      {i===1&&(
+                        <div className="text-center space-y-2 sm:space-y-3 min-w-0">
+                          <div className="text-xs sm:text-sm font-black text-slate-500 truncate uppercase">{side.p.name}</div>
+                          <input type="number" inputMode="numeric" value={side.s} onFocus={e=>e.target.select()} onChange={e=>side.setS(e.target.value)} className="w-full text-center text-3xl sm:text-4xl font-black py-3 sm:py-4 border-b-4 border-slate-100 focus:border-blue-500 outline-none"/>
+                          <span className="text-[11px] sm:text-[12px] font-black text-slate-400 uppercase">{isTeam?'Rounds Won':'Score'}</span>
+                        </div>
+                      )}
+                    </React.Fragment>
                   ))}
-                  <div className="text-2xl font-black text-slate-200">:</div>
                 </div>
               )}
 
-              <div className="flex flex-col gap-2 pt-4">
-                <button onClick={handleSave} className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black hover:bg-blue-700 shadow-lg shadow-blue-100">결과 저장</button>
+              <div className="flex flex-col gap-2 pt-2 sm:pt-4">
+                <button onClick={handleSave} className="w-full py-3 sm:py-4 bg-blue-600 text-white rounded-xl sm:rounded-2xl font-black hover:bg-blue-700 shadow-lg shadow-blue-100 text-sm sm:text-base">결과 저장</button>
                 <div className="flex gap-2">
-                  <button onClick={onClose} className="flex-1 py-3 bg-slate-100 text-slate-500 rounded-xl font-bold">닫기</button>
-                  {match.status==='completed'&&<button onClick={()=>onSave(match.id,0,0,null,true)} className="flex-1 py-3 bg-red-50 text-red-500 rounded-xl font-bold hover:bg-red-100">결과 초기화</button>}
+                  <button onClick={onClose} className="flex-1 py-2.5 sm:py-3 bg-slate-100 text-slate-500 rounded-xl font-bold text-sm sm:text-base">닫기</button>
+                  {match.status==='completed'&&<button onClick={()=>onSave(match.id,0,0,null,true)} className="flex-1 py-2.5 sm:py-3 bg-red-50 text-red-500 rounded-xl font-bold hover:bg-red-100 text-sm sm:text-base">결과 초기화</button>}
                 </div>
               </div>
             </div>
@@ -1684,24 +1725,24 @@
       return (
         <div className="min-h-screen bg-slate-900 flex flex-col select-none" style={{touchAction:'manipulation'}}>
           {/* 상단 — 대회명 + 닫기 (얇게) */}
-          <div className="bg-slate-800 px-6 py-2 flex justify-between items-center shrink-0 gap-4">
-            <div className="min-w-0 flex items-baseline gap-3">
-              <p className="text-sm font-black text-slate-300 truncate">{config?.name}</p>
-              <p className="text-[12px] font-black text-slate-500 uppercase tracking-widest">{sm?`${totalSets===1?'단판':totalSets+'판 '+winSets+'선승'}`:''} {match.court?`· ${match.court}코트`:''}</p>
+          <div className="bg-slate-800 px-3 sm:px-6 py-2 flex justify-between items-center shrink-0 gap-2 sm:gap-4">
+            <div className="min-w-0 flex items-baseline gap-1.5 sm:gap-3">
+              <p className="text-xs sm:text-sm font-black text-slate-300 truncate">{config?.name}</p>
+              <p className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest shrink-0">{sm?`${totalSets===1?'단판':totalSets+'판 '+winSets+'선승'}`:''} {match.court?`· ${match.court}코트`:''}</p>
             </div>
             {onClose&&(
               <button onClick={onClose}
-                className="w-9 h-9 rounded-full bg-slate-700 hover:bg-slate-600 text-white flex items-center justify-center text-lg active:scale-90 transition-all shrink-0" title="닫기">✕</button>
+                className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-slate-700 hover:bg-slate-600 text-white flex items-center justify-center text-base sm:text-lg active:scale-90 transition-all shrink-0" title="닫기">✕</button>
             )}
           </div>
 
           {/* 선수명 — 헤더 바로 아래 */}
           <div className="bg-slate-900 grid grid-cols-2 divide-x divide-slate-700 shrink-0 border-b border-slate-800">
-            <div className="text-center py-4">
-              <p className="text-white font-black text-3xl md:text-4xl leading-tight break-all px-2">{leftName}</p>
+            <div className="text-center py-3 sm:py-4">
+              <p className="text-white font-black text-xl sm:text-3xl md:text-4xl leading-tight break-all px-2">{leftName}</p>
             </div>
-            <div className="text-center py-4">
-              <p className="text-white font-black text-3xl md:text-4xl leading-tight break-all px-2">{rightName}</p>
+            <div className="text-center py-3 sm:py-4">
+              <p className="text-white font-black text-xl sm:text-3xl md:text-4xl leading-tight break-all px-2">{rightName}</p>
             </div>
           </div>
 
@@ -1710,32 +1751,32 @@
             <div className="flex-1 grid grid-cols-[1fr_auto_auto_1fr] divide-x divide-slate-700 items-stretch">
               {/* 좌측 점수 — 거대, 탭하여 +1 */}
               <button onPointerDown={()=>adjLeft(1)}
-                className={`flex flex-col items-center justify-center py-6 active:bg-blue-900/40 transition-colors ${matchOver&&leftWon>rightWon?'bg-green-900/15':''}`}>
-                <div className={`font-black tabular-nums leading-none ${getScoreColor(!courtSwapped)}`} style={{fontSize:'min(38vw,24rem)'}}>
+                className={`flex flex-col items-center justify-center py-4 sm:py-6 active:bg-blue-900/40 transition-colors ${matchOver&&leftWon>rightWon?'bg-green-900/15':''}`}>
+                <div className={`font-black tabular-nums leading-none ${getScoreColor(!courtSwapped)}`} style={{fontSize:'min(28vw,20rem)'}}>
                   {leftScore}
                 </div>
-                <div className="text-[12px] font-black text-slate-500 uppercase tracking-widest mt-4">탭하여 +1</div>
+                <div className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest mt-2 sm:mt-4">탭하여 +1</div>
               </button>
 
               {/* 좌측 세트 승수 */}
-              <div className="flex flex-col items-center justify-center px-4 md:px-8 bg-slate-950/50">
-                <p className="text-[11px] font-black text-amber-300/60 uppercase tracking-widest mb-2">세트</p>
-                <div className="font-black text-amber-300 tabular-nums leading-none" style={{fontSize:'min(14vw,9rem)'}}>{leftWon}</div>
+              <div className="flex flex-col items-center justify-center px-2 sm:px-4 md:px-8 bg-slate-950/50">
+                <p className="text-[9px] sm:text-[11px] font-black text-amber-300/60 uppercase tracking-widest mb-1 sm:mb-2">세트</p>
+                <div className="font-black text-amber-300 tabular-nums leading-none" style={{fontSize:'min(12vw,8rem)'}}>{leftWon}</div>
               </div>
 
               {/* 우측 세트 승수 */}
-              <div className="flex flex-col items-center justify-center px-4 md:px-8 bg-slate-950/50">
-                <p className="text-[11px] font-black text-amber-300/60 uppercase tracking-widest mb-2">세트</p>
-                <div className="font-black text-amber-300 tabular-nums leading-none" style={{fontSize:'min(14vw,9rem)'}}>{rightWon}</div>
+              <div className="flex flex-col items-center justify-center px-2 sm:px-4 md:px-8 bg-slate-950/50">
+                <p className="text-[9px] sm:text-[11px] font-black text-amber-300/60 uppercase tracking-widest mb-1 sm:mb-2">세트</p>
+                <div className="font-black text-amber-300 tabular-nums leading-none" style={{fontSize:'min(12vw,8rem)'}}>{rightWon}</div>
               </div>
 
               {/* 우측 점수 — 거대, 탭하여 +1 */}
               <button onPointerDown={()=>adjRight(1)}
-                className={`flex flex-col items-center justify-center py-6 active:bg-rose-900/40 transition-colors ${matchOver&&rightWon>leftWon?'bg-green-900/15':''}`}>
-                <div className={`font-black tabular-nums leading-none ${getScoreColor(courtSwapped)}`} style={{fontSize:'min(38vw,24rem)'}}>
+                className={`flex flex-col items-center justify-center py-4 sm:py-6 active:bg-rose-900/40 transition-colors ${matchOver&&rightWon>leftWon?'bg-green-900/15':''}`}>
+                <div className={`font-black tabular-nums leading-none ${getScoreColor(courtSwapped)}`} style={{fontSize:'min(28vw,20rem)'}}>
                   {rightScore}
                 </div>
-                <div className="text-[12px] font-black text-slate-500 uppercase tracking-widest mt-4">탭하여 +1</div>
+                <div className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest mt-2 sm:mt-4">탭하여 +1</div>
               </button>
             </div>
           ) : (
@@ -1743,49 +1784,49 @@
             <div className="flex-1 grid grid-cols-2 divide-x divide-slate-700">
               <button onPointerDown={()=>adjLeft(1)}
                 className={`flex flex-col items-center justify-center active:bg-blue-900/40 transition-colors ${matchOver&&leftWon>rightWon?'bg-green-900/15':''}`}>
-                <div className={`font-black tabular-nums leading-none ${getScoreColor(!courtSwapped)}`} style={{fontSize:'min(45vw,28rem)'}}>{leftScore}</div>
-                <div className="text-[12px] font-black text-slate-500 uppercase tracking-widest mt-4">탭하여 +1</div>
+                <div className={`font-black tabular-nums leading-none ${getScoreColor(!courtSwapped)}`} style={{fontSize:'min(35vw,24rem)'}}>{leftScore}</div>
+                <div className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest mt-2 sm:mt-4">탭하여 +1</div>
               </button>
               <button onPointerDown={()=>adjRight(1)}
                 className={`flex flex-col items-center justify-center active:bg-rose-900/40 transition-colors ${matchOver&&rightWon>leftWon?'bg-green-900/15':''}`}>
-                <div className={`font-black tabular-nums leading-none ${getScoreColor(courtSwapped)}`} style={{fontSize:'min(45vw,28rem)'}}>{rightScore}</div>
-                <div className="text-[12px] font-black text-slate-500 uppercase tracking-widest mt-4">탭하여 +1</div>
+                <div className={`font-black tabular-nums leading-none ${getScoreColor(courtSwapped)}`} style={{fontSize:'min(35vw,24rem)'}}>{rightScore}</div>
+                <div className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest mt-2 sm:mt-4">탭하여 +1</div>
               </button>
             </div>
           )}
 
           {/* 차감 + 코트 체인지 버튼 */}
-          <div className="grid grid-cols-[1fr_auto_1fr] gap-3 px-3 pt-3 bg-slate-900 shrink-0">
+          <div className="grid grid-cols-[1fr_auto_1fr] gap-2 sm:gap-3 px-2 sm:px-3 pt-2 sm:pt-3 bg-slate-900 shrink-0">
             <button onPointerDown={e=>{e.stopPropagation();adjLeft(-1);}}
-              className="py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white text-3xl font-black active:scale-95 transition-all flex items-center justify-center">−</button>
+              className="py-2 sm:py-3 rounded-xl sm:rounded-2xl bg-slate-800 hover:bg-slate-700 text-white text-2xl sm:text-3xl font-black active:scale-95 transition-all flex items-center justify-center">−</button>
             <button onClick={()=>setCourtSwapped(s=>!s)}
-              className="px-4 py-3 rounded-2xl bg-amber-600 hover:bg-amber-500 text-white text-base font-black active:scale-95 transition-all flex items-center justify-center gap-1" title="코트 체인지 — 좌우 자리 교체">
-              🔄 코트
+              className="px-3 sm:px-4 py-2 sm:py-3 rounded-xl sm:rounded-2xl bg-amber-600 hover:bg-amber-500 text-white text-sm sm:text-base font-black active:scale-95 transition-all flex items-center justify-center gap-1" title="코트 체인지 — 좌우 자리 교체">
+              🔄 <span className="hidden sm:inline">코트</span>
             </button>
             <button onPointerDown={e=>{e.stopPropagation();adjRight(-1);}}
-              className="py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white text-3xl font-black active:scale-95 transition-all flex items-center justify-center">−</button>
+              className="py-2 sm:py-3 rounded-xl sm:rounded-2xl bg-slate-800 hover:bg-slate-700 text-white text-2xl sm:text-3xl font-black active:scale-95 transition-all flex items-center justify-center">−</button>
           </div>
           {/* 하단 — 세트 히스토리 + 버튼 */}
-          <div className="bg-slate-800 px-6 py-4 space-y-3 shrink-0">
+          <div className="bg-slate-800 px-3 sm:px-6 py-3 sm:py-4 space-y-2 sm:space-y-3 shrink-0">
             {history.length>0&&(
-              <div className="flex gap-3 justify-center flex-wrap">
+              <div className="flex gap-1.5 sm:gap-3 justify-center flex-wrap">
                 {history.map((s,i)=>(
-                  <div key={i} className="text-center bg-slate-900 px-3 py-1 rounded-lg">
-                    <p className="text-[11px] text-slate-400 font-black uppercase">{i+1}세트</p>
-                    <p className={`text-lg font-black ${s.a>s.b?'text-green-400':'text-rose-400'}`}>{s.a} : {s.b}</p>
+                  <div key={i} className="text-center bg-slate-900 px-2 sm:px-3 py-1 rounded-lg">
+                    <p className="text-[9px] sm:text-[11px] text-slate-400 font-black uppercase">{i+1}세트</p>
+                    <p className={`text-sm sm:text-lg font-black ${s.a>s.b?'text-green-400':'text-rose-400'}`}>{s.a} : {s.b}</p>
                   </div>
                 ))}
               </div>
             )}
-            <div className="flex gap-3">
+            <div className="flex gap-2 sm:gap-3">
               {sm&&!matchOver&&(
                 <button onClick={endSet} disabled={saving}
-                  className="flex-1 py-5 bg-amber-500 text-white rounded-2xl font-black text-lg active:bg-amber-400 active:scale-95 transition-all">
+                  className="flex-1 py-3 sm:py-5 bg-amber-500 text-white rounded-xl sm:rounded-2xl font-black text-base sm:text-lg active:bg-amber-400 active:scale-95 transition-all">
                   {saving?'저장 중...':'✅ 세트 종료'}
                 </button>
               )}
               <button onClick={finishMatch} disabled={saving}
-                className={`flex-1 py-5 rounded-2xl font-black text-lg transition-all active:scale-95 ${matchOver?'bg-green-600 text-white active:bg-green-500':'bg-slate-600 text-slate-400'}`}>
+                className={`flex-1 py-3 sm:py-5 rounded-xl sm:rounded-2xl font-black text-base sm:text-lg transition-all active:scale-95 ${matchOver?'bg-green-600 text-white active:bg-green-500':'bg-slate-600 text-slate-400'}`}>
                 {saving?'저장 중...':matchOver?'🏆 경기 종료 저장':'경기 종료'}
               </button>
             </div>
@@ -2025,39 +2066,77 @@
         setView('scoreboard');
       };
 
-      // ➕ 라운드 추가 — 풀리그/조별 모드에서 사용자가 원할 때 1라운드 더 추가
-      const handleAddRound = (groupId=null) => {
-        const buildNewRound = (existingRounds, participants, prefix) => {
-          // 기존 라운드 수 다음 번호로
+      // ➕ 라운드 추가 — 풀리그/조별 모드에서 사용자가 원할 때 라운드 추가
+      // mode: 'shuffle' (셔플 한 라운드) | 'roundrobin' (정석 풀리그 1바퀴 통째)
+      const handleAddRound = (groupId=null, mode='shuffle') => {
+        // 고유 suffix — ID 충돌 방지
+        const uniq = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+
+        // 셔플 한 라운드 생성
+        const buildShuffleRound = (existingRounds, participants, prefix) => {
           const nextNum = (existingRounds||[]).length + 1;
-          // 새 라운드 매치 생성 (셔플로 새 매칭)
-          const shuffled = [...participants].sort(()=>Math.random()-0.5);
+          const active = participants.filter(p=>p&&!p.id.startsWith('bye'));
+          const shuffled = [...active].sort(()=>Math.random()-0.5);
           const isOdd = shuffled.length % 2 !== 0;
-          if(isOdd) shuffled.push({id:`bye-r${nextNum}-${Math.random()}`,name:'휴식(Bye)',isSeeded:false});
+          if(isOdd) shuffled.push({id:`bye-r${nextNum}-${uniq}`,name:'휴식(Bye)',isSeeded:false});
           const matches=[];
           const half = shuffled.length / 2;
           for(let j=0;j<half;j++){
             matches.push({
-              id:`l-${prefix}-r${nextNum}-add-${Date.now()}-m${j}`,
+              id:`l-${prefix}-r${nextNum}-${uniq}-m${j}`,
               home: shuffled[j],
               away: shuffled[shuffled.length-1-j],
               status:'pending'
             });
           }
-          return { roundNumber: nextNum, matches };
+          return [{ roundNumber: nextNum, matches }];
         };
+
+        // 정석 풀리그 1바퀴 — n-1 라운드 통째 추가
+        const buildFullRoundRobin = (existingRounds, participants, prefix) => {
+          const active = participants.filter(p=>p&&!p.id.startsWith('bye'));
+          const startNum = (existingRounds||[]).length + 1;
+          const teams = [...active];
+          const isOdd = teams.length % 2 !== 0;
+          if(isOdd) teams.push({id:`bye-rr-${uniq}`,name:'휴식(Bye)',isSeeded:false});
+          const rounds=[]; const tc=teams.length; const nr=tc-1; const half=tc/2;
+          const list=[...teams];
+          for(let i=0;i<nr;i++){
+            const matches=[];
+            const roundNum = startNum + i;
+            for(let j=0;j<half;j++){
+              matches.push({
+                // ID 충돌 방지: uniq + 라운드 + 매치인덱스 + 라운드 순환 인덱스 i
+                id:`l-${prefix}-rr${roundNum}-${uniq}-i${i}-m${j}`,
+                // 홈/원정 살짝 섞기 위해 라운드별 alternate
+                home: i%2===0 ? list[j] : list[tc-1-j],
+                away: i%2===0 ? list[tc-1-j] : list[j],
+                status:'pending'
+              });
+            }
+            rounds.push({ roundNumber: roundNum, matches });
+            // round-robin rotation (circle method)
+            list.splice(1,0,list.pop());
+          }
+          return rounds;
+        };
+
+        const builder = mode === 'roundrobin' ? buildFullRoundRobin : buildShuffleRound;
 
         if(groupId){
           // 조별 모드 — 해당 조에만 라운드 추가
+          // ⭐ prev 기반으로 빌드 (race condition 방지)
           setGeneratedGroups(prev=>prev.map(g=>{
             if(g.id!==groupId) return g;
-            const newRound = buildNewRound(g.rounds, g.participants, `g${g.id}`);
-            return {...g, rounds:[...g.rounds, newRound]};
+            const newRounds = builder(g.rounds, g.participants, `g${g.id}`);
+            return {...g, rounds:[...(g.rounds||[]), ...newRounds]};
           }));
         } else {
-          // 풀리그 모드
-          const newRound = buildNewRound(generatedLeague, activeParticipants, 'league');
-          setGeneratedLeague(prev=>[...prev, newRound]);
+          // 풀리그 모드 — prev 기반으로 빌드
+          setGeneratedLeague(prev=>{
+            const newRounds = builder(prev, activeParticipants, 'league');
+            return [...(prev||[]), ...newRounds];
+          });
         }
       };
 
@@ -2252,7 +2331,7 @@
       if(loading) return (
         <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4">
           <span className="text-5xl animate-bounce">🏁</span>
-          <p className="font-black text-slate-400 uppercase tracking-widest text-base">Loading MatchMaker...</p>
+          <p className="font-black text-slate-400 uppercase tracking-widest text-base">Loading MatchMaker Pro...</p>
         </div>
       );
 
@@ -2277,33 +2356,62 @@
         <div className="min-h-screen bg-slate-50 flex flex-col">
           {/* Header */}
           <header className="bg-white border-b-2 border-slate-100 sticky top-0 z-40 shadow-sm">
-            <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
-              <button onClick={goToDashboard} className="flex items-center gap-3 group">
-                <span className="text-3xl transition-transform group-hover:scale-110">🏁</span>
-                <h1 className="text-xl font-black text-slate-900 tracking-tighter uppercase">MatchMaker</h1>
+            <div className="max-w-5xl mx-auto px-2 sm:px-4 py-2 sm:py-3 flex items-center justify-between gap-2">
+              <button onClick={goToDashboard} className="flex items-center gap-1.5 sm:gap-3 group shrink-0">
+                <span className="text-2xl sm:text-3xl transition-transform group-hover:scale-110">🏁</span>
+                <h1 className="text-base sm:text-xl font-black text-slate-900 tracking-tighter uppercase flex items-center gap-1.5">
+                  <span className="hidden sm:inline">MatchMaker</span>
+                  <span className="sm:hidden">MM</span>
+                  <span className="text-[10px] sm:text-[11px] font-black bg-gradient-to-br from-purple-600 to-indigo-600 text-white px-1.5 sm:px-2 py-0.5 rounded">PRO</span>
+                </h1>
               </button>
-              <div className="flex items-center gap-3">
-                {saving&&<span className="text-[12px] font-black text-slate-400 animate-pulse uppercase">저장 중...</span>}
+              <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                {saving&&<span className="hidden sm:inline text-[12px] font-black text-slate-400 animate-pulse uppercase">저장 중...</span>}
+                {saving&&<span className="sm:hidden text-[10px] font-black text-slate-400 animate-pulse">💾</span>}
                 {view==='active'&&(
                   <>
-                    {<button onClick={()=>setShowAttendance(true)} className="bg-amber-500 text-white px-3 py-2 rounded-xl font-black text-sm hover:bg-amber-600 shadow-md active:scale-95">🚫 출결{(()=>{
+                    {(() => {
                       const ids=new Set();
                       const collect=(arr)=>(arr||[]).forEach(p=>{if(p&&p.absent&&!p.id.startsWith('bye'))ids.add(p.id);});
                       collect(participants); collect(activeParticipants);
                       (generatedGroups||[]).forEach(g=>collect(g.participants));
-                      return ids.size>0?` (${ids.size})`:'';
-                    })()}</button>}
-                    {<button onClick={handleShareCurrent} className="bg-blue-600 text-white px-3 py-2 rounded-xl font-black text-sm hover:bg-blue-700 shadow-md active:scale-95">🔗 공유</button>}
-                    {<button onClick={handleExportToSheets} className="bg-emerald-600 text-white px-3 py-2 rounded-xl font-black text-sm hover:bg-emerald-700 shadow-md active:scale-95">📊 시트 내보내기</button>}
-                    <button onClick={downloadCSV} className="bg-slate-900 text-white px-3 py-2 rounded-xl font-black text-sm hover:bg-slate-800 shadow-md active:scale-95">💾 CSV</button>
+                      const absentCount = ids.size;
+                      return (
+                        <button onClick={()=>setShowAttendance(true)} title="출결 관리"
+                          className="bg-amber-500 text-white px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl font-black text-sm hover:bg-amber-600 shadow-md active:scale-95 flex items-center gap-1">
+                          <span>🚫</span>
+                          <span className="hidden sm:inline">출결</span>
+                          {absentCount>0&&<span className="text-[10px] sm:text-[11px] bg-white/30 px-1 rounded">{absentCount}</span>}
+                        </button>
+                      );
+                    })()}
+                    <button onClick={handleShareCurrent} title="공유 링크"
+                      className="bg-blue-600 text-white px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl font-black text-sm hover:bg-blue-700 shadow-md active:scale-95">
+                      <span>🔗</span><span className="hidden sm:inline ml-1">공유</span>
+                    </button>
+                    {window.GAS_API_URL&&(
+                      <button onClick={handleExportToSheets} title="시트 내보내기"
+                        className="bg-emerald-600 text-white px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl font-black text-sm hover:bg-emerald-700 shadow-md active:scale-95">
+                        <span>📊</span><span className="hidden sm:inline ml-1">시트</span>
+                      </button>
+                    )}
+                    <button onClick={downloadCSV} title="CSV 다운로드"
+                      className="bg-slate-900 text-white px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl font-black text-sm hover:bg-slate-800 shadow-md active:scale-95">
+                      <span>💾</span><span className="hidden sm:inline ml-1">CSV</span>
+                    </button>
                   </>
                 )}
-                {view==='share'&&<span className="bg-blue-50 text-blue-600 px-4 py-2 rounded-xl font-black text-sm border border-blue-100 italic">Shared Content (읽기 전용)</span>}
+                {view==='share'&&(
+                  <span className="bg-blue-50 text-blue-600 px-2 sm:px-4 py-1.5 sm:py-2 rounded-xl font-black text-[11px] sm:text-sm border border-blue-100 italic">
+                    <span className="hidden sm:inline">Shared Content (읽기 전용)</span>
+                    <span className="sm:hidden">👁 읽기 전용</span>
+                  </span>
+                )}
               </div>
             </div>
           </header>
 
-          <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-8">
+          <main className="flex-1 max-w-5xl mx-auto w-full px-3 sm:px-4 py-4 sm:py-8">
 
             {/* ──── DASHBOARD ──── */}
             {view==='dashboard'&&(
@@ -2380,31 +2488,31 @@
             {/* ──── ACTIVE / SHARE ──── */}
             {(view==='active'||view==='share')&&(
               <div className="space-y-12 animate-fade-in">
-                <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-center gap-6">
-                  <div>
-                    <h2 className="text-3xl font-black text-slate-900 italic tracking-tight">{config.name||'무제'}</h2>
-                    <div className="flex gap-2 mt-2 flex-wrap">
-                      <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-[12px] font-black uppercase tracking-tighter">{config.tournamentType===TType.GROUP_LEAGUE?'조별 풀리그':config.tournamentType}</span>
-                      <span className="px-3 py-1 bg-slate-100 text-slate-700 rounded-full text-[12px] font-black uppercase tracking-tighter">{config.matchType}</span>
+                <div className="bg-white p-4 sm:p-8 rounded-2xl sm:rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-3 sm:gap-6">
+                  <div className="w-full md:w-auto">
+                    <h2 className="text-xl sm:text-3xl font-black text-slate-900 italic tracking-tight">{config.name||'무제'}</h2>
+                    <div className="flex gap-1.5 sm:gap-2 mt-2 flex-wrap">
+                      <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-blue-100 text-blue-700 rounded-full text-[10px] sm:text-[12px] font-black uppercase tracking-tighter">{config.tournamentType===TType.GROUP_LEAGUE?'조별 풀리그':config.tournamentType}</span>
+                      <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-slate-100 text-slate-700 rounded-full text-[10px] sm:text-[12px] font-black uppercase tracking-tighter">{config.matchType}</span>
                       {isSetsGame(config.sport)&&(
-                        <span className="px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-[12px] font-black uppercase tracking-tighter">
+                        <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-amber-100 text-amber-700 rounded-full text-[10px] sm:text-[12px] font-black uppercase tracking-tighter">
                           {(config.sets||3)===1?'단판제':`${config.sets||3}판 ${Math.ceil((config.sets||3)/2)}선승`}
                         </span>
                       )}
                     </div>
                   </div>
                   {view!=='share'&&(
-                    <div className="flex gap-2">
-                      <button onClick={()=>{setStep(1);setView('setup');}} className="bg-slate-100 text-slate-600 px-4 py-2 rounded-xl font-black text-sm hover:bg-slate-200">🛠️ 설정 수정</button>
-                      <button onClick={()=>{setStep(2);setView('setup');}} className="bg-slate-100 text-slate-600 px-4 py-2 rounded-xl font-black text-sm hover:bg-slate-200">👥 명단 수정</button>
+                    <div className="flex gap-2 w-full md:w-auto">
+                      <button onClick={()=>{setStep(1);setView('setup');}} className="flex-1 md:flex-none bg-slate-100 text-slate-600 px-3 sm:px-4 py-2 rounded-xl font-black text-xs sm:text-sm hover:bg-slate-200">🛠️ <span className="hidden sm:inline">설정 수정</span><span className="sm:hidden">설정</span></button>
+                      <button onClick={()=>{setStep(2);setView('setup');}} className="flex-1 md:flex-none bg-slate-100 text-slate-600 px-3 sm:px-4 py-2 rounded-xl font-black text-xs sm:text-sm hover:bg-slate-200">👥 <span className="hidden sm:inline">명단 수정</span><span className="sm:hidden">명단</span></button>
                     </div>
                   )}
                 </div>
-                {config.tournamentType===TType.LEAGUE&&<LeagueView participants={activeParticipants} rounds={generatedLeague} onMatchClick={m=>view!=='share'&&setSelectedLeagueMatch({match:m})} onScoreboardLink={view!=='share'?handleScoreboardLink:null} onAddRound={view!=='share'?()=>handleAddRound(null):null}/>}
+                {config.tournamentType===TType.LEAGUE&&<LeagueView participants={activeParticipants} rounds={generatedLeague} onMatchClick={m=>view!=='share'&&setSelectedLeagueMatch({match:m})} onScoreboardLink={view!=='share'?handleScoreboardLink:null} onAddRound={view!=='share'?(mode)=>handleAddRound(null,mode):null}/>}
                 {config.tournamentType===TType.TOURNAMENT&&<div className="bg-white p-10 rounded-[3rem] border border-slate-200 shadow-sm"><BracketView matches={generatedMatches} onMatchClick={m=>view!=='share'&&setSelectedMatch(m)} onScoreboardLink={view!=='share'?handleScoreboardLink:null}/></div>}
                 {isGroupType&&(
                   <div className="space-y-16">
-                    <GroupStageView groups={generatedGroups} config={config} onMatchClick={(m,gid)=>view!=='share'&&setSelectedLeagueMatch({match:m,groupId:gid})} onScoreboardLink={view!=='share'?handleScoreboardLink:null} onAddRound={view!=='share'?(gid)=>handleAddRound(gid):null}/>
+                    <GroupStageView groups={generatedGroups} config={config} onMatchClick={(m,gid)=>view!=='share'&&setSelectedLeagueMatch({match:m,groupId:gid})} onScoreboardLink={view!=='share'?handleScoreboardLink:null} onAddRound={view!=='share'?(gid,mode)=>handleAddRound(gid,mode):null}/>
                     {config.tournamentType===TType.GROUP_KNOCKOUT&&(
                       <div className="bg-white p-10 rounded-[3rem] border border-slate-200 shadow-sm">
                         <div className="flex flex-col sm:flex-row justify-between items-center mb-10 gap-4 border-b border-slate-100 pb-6">
@@ -2642,7 +2750,7 @@
         animation: fade-in 0.4s ease-out;
       `;
       banner.innerHTML = `
-        <img src="./icons/icon-192.png" alt="MatchMaker" style="width:42px;height:42px;border-radius:10px;flex-shrink:0;">
+        <img src="./icons/icon-192.png" alt="MatchMaker Pro" style="width:42px;height:42px;border-radius:10px;flex-shrink:0;">
         <div style="flex:1;min-width:0;">
           <div style="font-weight:900;font-size:14px;">앱으로 설치하기</div>
           <div style="font-size:12px;color:#94a3b8;margin-top:2px;">홈 화면에서 빠르게 실행하세요</div>
