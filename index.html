@@ -80,6 +80,8 @@
     //  Firebase 데이터 함수 + localStorage 백업
     // ================================================================
     const LS_KEY = 'matchmaker_pro_tournaments';
+    const LS_FOLDERS_KEY = 'matchmaker_pro_folders';
+    const LS_FAV_KEY = 'matchmaker_pro_favorites';
 
     // localStorage 헬퍼
     const lsGetAll = () => {
@@ -90,6 +92,22 @@
     };
     const lsDelete = (id) => {
       try { const d=lsGetAll(); delete d[id]; localStorage.setItem(LS_KEY,JSON.stringify(d)); } catch(e) {}
+    };
+
+    // 📁 폴더 헬퍼
+    const lsGetFolders = () => {
+      try { return JSON.parse(localStorage.getItem(LS_FOLDERS_KEY)||'{}'); } catch(e) { return {}; }
+    };
+    const lsSaveFolders = (folders) => {
+      try { localStorage.setItem(LS_FOLDERS_KEY, JSON.stringify(folders)); } catch(e) {}
+    };
+
+    // ⭐ 즐겨찾기 헬퍼 (배열로 저장)
+    const lsGetFavorites = () => {
+      try { return JSON.parse(localStorage.getItem(LS_FAV_KEY)||'[]'); } catch(e) { return []; }
+    };
+    const lsSaveFavorites = (favs) => {
+      try { localStorage.setItem(LS_FAV_KEY, JSON.stringify(favs)); } catch(e) {}
     };
 
     // Firebase는 undefined 값을 허용하지 않음 — JSON 왕복으로 undefined 키 제거
@@ -126,6 +144,22 @@
         try { const d=JSON.parse(localStorage.getItem('mm_shares')||'{}'); d[shareId]={data:JSON.stringify(record)}; localStorage.setItem('mm_shares',JSON.stringify(d)); } catch(e2) {}
       }
       return shareId;
+    };
+
+    // 📁 Firebase 폴더 저장/조회
+    const fbSaveFolders = async (folders) => {
+      lsSaveFolders(folders);
+      try {
+        await db.ref('folders').set(sanitizeForFirebase(folders));
+      } catch(e) { console.warn('Firebase 폴더 저장 실패:', e); }
+    };
+    const fbLoadFolders = async () => {
+      try {
+        const snap = await db.ref('folders').once('value');
+        const val = snap.val();
+        if (val) { lsSaveFolders(val); return val; }
+      } catch(e) { console.warn('Firebase 폴더 로딩 실패:', e); }
+      return lsGetFolders();
     };
     const fbGetShare = async (shareId) => {
       try {
@@ -2247,6 +2281,150 @@
     };
 
     // ================================================================
+    //  📁 FolderEditModal — 폴더 생성/편집
+    // ================================================================
+    const FolderEditModal = ({ folder, onSave, onClose, onDelete }) => {
+      const [name, setName] = useState(folder?.name || '');
+      const [icon, setIcon] = useState(folder?.icon || '📁');
+      const [color, setColor] = useState(folder?.color || 'blue');
+      const isNew = !folder?.id;
+
+      const FOLDER_ICONS = ['📁','📂','🏆','⭐','🎯','🏀','⚽','🎾','🏓','🏸','🏐','🏆','📊','📚','1️⃣','2️⃣','3️⃣','🔴','🟠','🟡','🟢','🔵','🟣'];
+      const FOLDER_COLORS = [
+        { id: 'blue', name: '파랑', bg: 'bg-blue-100', text: 'text-blue-700', border: 'border-blue-300' },
+        { id: 'purple', name: '보라', bg: 'bg-purple-100', text: 'text-purple-700', border: 'border-purple-300' },
+        { id: 'pink', name: '핑크', bg: 'bg-pink-100', text: 'text-pink-700', border: 'border-pink-300' },
+        { id: 'red', name: '빨강', bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-300' },
+        { id: 'amber', name: '노랑', bg: 'bg-amber-100', text: 'text-amber-700', border: 'border-amber-300' },
+        { id: 'green', name: '초록', bg: 'bg-green-100', text: 'text-green-700', border: 'border-green-300' },
+        { id: 'teal', name: '청록', bg: 'bg-teal-100', text: 'text-teal-700', border: 'border-teal-300' },
+        { id: 'slate', name: '회색', bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-300' }
+      ];
+
+      const save = () => {
+        if(!name.trim()){ alert('폴더 이름을 입력하세요.'); return; }
+        onSave({...folder, name: name.trim(), icon, color});
+      };
+
+      return (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={onClose}>
+          <div className="bg-white rounded-2xl sm:rounded-3xl w-full max-w-md shadow-2xl overflow-hidden max-h-[90vh] flex flex-col" onClick={e=>e.stopPropagation()}>
+            <div className="bg-blue-600 p-5 text-white text-center shrink-0">
+              <p className="text-[11px] font-black text-blue-200 uppercase tracking-widest mb-1">{isNew?'Create Folder':'Edit Folder'}</p>
+              <h3 className="text-xl font-black italic">{isNew?'새 폴더 만들기':'폴더 편집'}</h3>
+            </div>
+            <div className="p-5 space-y-4 overflow-y-auto">
+              {/* 미리보기 */}
+              <div className={`p-4 rounded-2xl border-2 ${FOLDER_COLORS.find(c=>c.id===color)?.bg} ${FOLDER_COLORS.find(c=>c.id===color)?.border} flex items-center gap-3`}>
+                <span className="text-3xl">{icon}</span>
+                <span className={`font-black text-lg ${FOLDER_COLORS.find(c=>c.id===color)?.text}`}>{name || '폴더 이름'}</span>
+              </div>
+
+              {/* 이름 */}
+              <div>
+                <label className="text-[12px] font-black text-slate-500 uppercase tracking-widest">폴더 이름</label>
+                <input type="text" value={name} onChange={e=>setName(e.target.value)} maxLength={20}
+                  placeholder="예: 1학년 1학기"
+                  className="w-full mt-1 p-3 bg-slate-50 border-2 border-slate-100 focus:border-blue-500 rounded-xl font-bold outline-none"
+                  autoFocus/>
+              </div>
+
+              {/* 아이콘 */}
+              <div>
+                <label className="text-[12px] font-black text-slate-500 uppercase tracking-widest">아이콘</label>
+                <div className="mt-2 grid grid-cols-8 gap-1.5">
+                  {FOLDER_ICONS.map(ic=>(
+                    <button key={ic} onClick={()=>setIcon(ic)}
+                      className={`aspect-square text-2xl rounded-lg border-2 transition-all ${icon===ic?'border-blue-500 bg-blue-50 scale-110':'border-slate-100 bg-white hover:border-blue-200'}`}>
+                      {ic}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 색상 */}
+              <div>
+                <label className="text-[12px] font-black text-slate-500 uppercase tracking-widest">색상</label>
+                <div className="mt-2 grid grid-cols-4 gap-2">
+                  {FOLDER_COLORS.map(c=>(
+                    <button key={c.id} onClick={()=>setColor(c.id)}
+                      className={`p-3 rounded-xl border-2 transition-all ${color===c.id?c.border+' '+c.bg+' scale-105':'border-slate-100 bg-white hover:border-slate-300'}`}>
+                      <div className={`w-4 h-4 rounded-full mx-auto ${c.bg} border ${c.border}`}></div>
+                      <p className="text-[10px] font-bold text-slate-600 mt-1">{c.name}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="p-5 pt-3 space-y-2 border-t border-slate-100 shrink-0">
+              <button onClick={save} className="w-full py-3 bg-blue-600 text-white rounded-xl font-black hover:bg-blue-700">
+                {isNew?'폴더 생성':'저장'}
+              </button>
+              <div className="flex gap-2">
+                <button onClick={onClose} className="flex-1 py-2.5 bg-slate-100 text-slate-500 rounded-xl font-bold text-sm">취소</button>
+                {!isNew&&onDelete&&(
+                  <button onClick={()=>{onDelete(folder.id); onClose();}}
+                    className="flex-1 py-2.5 bg-red-50 text-red-500 rounded-xl font-bold text-sm hover:bg-red-100">폴더 삭제</button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // ================================================================
+    //  📂 MoveToFolderModal — 대회를 폴더로 이동
+    // ================================================================
+    const MoveToFolderModal = ({ tournament, folders, onMove, onClose, onCreateFolder }) => {
+      const folderList = Object.values(folders).sort((a,b)=>(a.order||0)-(b.order||0));
+      const currentFolderId = tournament.folderId || null;
+
+      return (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={onClose}>
+          <div className="bg-white rounded-2xl sm:rounded-3xl w-full max-w-md shadow-2xl overflow-hidden max-h-[80vh] flex flex-col" onClick={e=>e.stopPropagation()}>
+            <div className="bg-slate-800 p-5 text-white text-center shrink-0">
+              <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-1">Move to Folder</p>
+              <h3 className="text-xl font-black italic">폴더로 이동</h3>
+              <p className="text-sm text-slate-300 mt-1 truncate">"{tournament.config?.name||'무제'}"</p>
+            </div>
+            <div className="p-5 space-y-2 overflow-y-auto">
+              {/* 전체 (폴더 없음) */}
+              <button onClick={()=>onMove(tournament.id, null)}
+                className={`w-full p-3 rounded-xl border-2 text-left transition-all ${!currentFolderId?'border-blue-500 bg-blue-50':'border-slate-100 hover:border-blue-200'}`}>
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">📋</span>
+                  <span className="font-black text-slate-700">전체 (폴더 없음)</span>
+                  {!currentFolderId&&<span className="ml-auto text-blue-500 font-black">✓</span>}
+                </div>
+              </button>
+              {folderList.map(f=>(
+                <button key={f.id} onClick={()=>onMove(tournament.id, f.id)}
+                  className={`w-full p-3 rounded-xl border-2 text-left transition-all ${currentFolderId===f.id?'border-blue-500 bg-blue-50':'border-slate-100 hover:border-blue-200'}`}>
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl">{f.icon||'📁'}</span>
+                    <span className="font-black text-slate-700 truncate">{f.name}</span>
+                    {currentFolderId===f.id&&<span className="ml-auto text-blue-500 font-black">✓</span>}
+                  </div>
+                </button>
+              ))}
+              {folderList.length===0&&(
+                <p className="text-center text-slate-400 py-4">아직 폴더가 없습니다</p>
+              )}
+            </div>
+            <div className="p-5 pt-3 space-y-2 border-t border-slate-100 shrink-0">
+              <button onClick={()=>{onClose();onCreateFolder();}}
+                className="w-full py-2.5 bg-blue-50 text-blue-600 rounded-xl font-bold text-sm hover:bg-blue-100">
+                + 새 폴더 만들기
+              </button>
+              <button onClick={onClose} className="w-full py-2.5 bg-slate-100 text-slate-500 rounded-xl font-bold text-sm">닫기</button>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // ================================================================
     //  App — 메인 컴포넌트
     // ================================================================
     const DEFAULT_CONFIG = {
@@ -2267,6 +2445,12 @@
       const [view, setView]            = useState('dashboard');
       const [showArchived, setShowArchived] = useState(false);
       const [userTournaments, setUserTournaments] = useState([]);
+      const [folders, setFolders] = useState({});           // 📁 폴더들
+      const [favorites, setFavorites] = useState([]);       // ⭐ 즐겨찾기 ID들
+      const [currentFolderId, setCurrentFolderId] = useState(null); // 선택된 폴더 (null=전체)
+      const [showFolderModal, setShowFolderModal] = useState(false); // 폴더 관리 모달
+      const [editingFolder, setEditingFolder] = useState(null); // 편집 중인 폴더
+      const [moveDialogTour, setMoveDialogTour] = useState(null); // 이동할 대회
       const [currentId, setCurrentId]  = useState(null);
       const [config, setConfig]        = useState({...DEFAULT_CONFIG});
       const [participants, setParticipants]         = useState([]);
@@ -2363,7 +2547,21 @@
           setLoading(false);
         });
 
-        return ()=>ref.off();
+        // 📁 폴더 로딩 (Firebase 우선, 실패 시 localStorage)
+        const foldersRef = db.ref('folders');
+        foldersRef.on('value', snap=>{
+          const val = snap.val() || {};
+          setFolders(val);
+          try { localStorage.setItem(LS_FOLDERS_KEY, JSON.stringify(val)); } catch(e) {}
+        }, err=>{
+          console.warn('Firebase 폴더 로딩 실패:', err);
+          setFolders(lsGetFolders());
+        });
+
+        // ⭐ 즐겨찾기 로딩 (localStorage 기반 — 기기별 개별 관리)
+        setFavorites(lsGetFavorites());
+
+        return ()=>{ ref.off(); foldersRef.off(); };
       },[]);
 
       // ── 자동 저장 (디바운스 300ms — Firebase는 빠름) ──────
@@ -2456,6 +2654,71 @@
           if(record) fbSave(id,record).catch(console.error);
           return updated;
         });
+      };
+
+      // 📁 폴더 핸들러
+      const handleSaveFolder = (folderData) => {
+        const id = folderData.id || `f_${Math.random().toString(36).substr(2,9)}`;
+        const folder = {
+          id,
+          name: folderData.name || '새 폴더',
+          color: folderData.color || 'blue',
+          icon: folderData.icon || '📁',
+          order: folderData.order ?? Object.keys(folders).length,
+          createdAt: folderData.createdAt || Date.now()
+        };
+        const newFolders = {...folders, [id]: folder};
+        setFolders(newFolders);
+        fbSaveFolders(newFolders);
+        setEditingFolder(null);
+      };
+
+      const handleDeleteFolder = (folderId) => {
+        if(!window.confirm('이 폴더를 삭제합니다.\n폴더 안의 대회들은 "전체"로 이동합니다.\n계속하시겠습니까?')) return;
+        // 폴더 삭제 + 그 폴더에 속한 대회들의 folderId 제거
+        const newFolders = {...folders};
+        delete newFolders[folderId];
+        setFolders(newFolders);
+        fbSaveFolders(newFolders);
+        // 대회들의 folderId 제거
+        setUserTournaments(prev=>{
+          const updated = prev.map(t=>{
+            if(t.folderId === folderId){
+              const updatedT = {...t, folderId: null};
+              fbSave(t.id, updatedT).catch(console.error);
+              return updatedT;
+            }
+            return t;
+          });
+          return updated;
+        });
+        if(currentFolderId === folderId) setCurrentFolderId(null);
+      };
+
+      // 대회를 폴더로 이동
+      const handleMoveTournament = (tournamentId, folderId) => {
+        setUserTournaments(prev=>{
+          const updated = prev.map(t=>{
+            if(t.id === tournamentId){
+              const updatedT = {...t, folderId: folderId || null};
+              fbSave(t.id, updatedT).catch(console.error);
+              return updatedT;
+            }
+            return t;
+          });
+          return updated;
+        });
+        setMoveDialogTour(null);
+      };
+
+      // ⭐ 즐겨찾기 토글
+      const toggleFavorite = (id, e) => {
+        e?.stopPropagation();
+        const newFavs = favorites.includes(id)
+          ? favorites.filter(f=>f!==id)
+          : [...favorites, id];
+        setFavorites(newFavs);
+        lsSaveFavorites(newFavs);
       };
 
       // 공유 링크 — Firebase 스냅샷 저장
@@ -2836,13 +3099,13 @@
 
             {/* ──── DASHBOARD ──── */}
             {view==='dashboard'&&(
-              <div className="space-y-10 animate-fade-in">
+              <div className="space-y-6 sm:space-y-10 animate-fade-in">
                 <div className="flex justify-between items-end flex-wrap gap-4">
                   <div className="space-y-2">
-                    <h2 className="text-4xl font-black text-slate-900 italic tracking-tighter">My Competitions.</h2>
-                    <button onClick={()=>setShowArchived(!showArchived)} className="text-base font-bold text-blue-600 hover:underline">{showArchived?'← 활성 대회 보기':'📁 보관된 대회 보기'}</button>
+                    <h2 className="text-3xl sm:text-4xl font-black text-slate-900 italic tracking-tighter">My Competitions.</h2>
+                    <button onClick={()=>{setShowArchived(!showArchived);setCurrentFolderId(null);}} className="text-sm sm:text-base font-bold text-blue-600 hover:underline">{showArchived?'← 활성 대회 보기':'📁 보관된 대회 보기'}</button>
                   </div>
-                  <div className="flex gap-3 flex-wrap items-center">
+                  <div className="flex gap-2 sm:gap-3 flex-wrap items-center">
                     <button onClick={()=>{
                       if(!window.confirm('구글 시트의 기존 대회 데이터를 Firebase로 가져옵니다.\n이미 있는 대회는 덮어씁니다. 계속하시겠습니까?'))return;
                       gasCall('getSheetTournaments')
@@ -2857,24 +3120,127 @@
                           alert(`✅ ${count}개 대회를 Firebase로 가져왔습니다!\n페이지를 새로고침하면 목록에 표시됩니다.`);
                         })
                         .catch(()=>alert('가져오기 실패. 다시 시도해주세요.'));
-                    }} className="text-sm font-black text-amber-700 bg-amber-50 border border-amber-200 px-4 py-2 rounded-xl hover:bg-amber-100">
-                      📥 시트 대회 가져오기
+                    }} className="text-xs sm:text-sm font-black text-amber-700 bg-amber-50 border border-amber-200 px-3 sm:px-4 py-2 rounded-xl hover:bg-amber-100">
+                      📥 <span className="hidden sm:inline">시트 대회 가져오기</span><span className="sm:hidden">시트</span>
                     </button>
-                    {!showArchived&&<button onClick={startNew} className="bg-blue-600 text-white px-8 py-4 rounded-2xl font-black text-lg hover:bg-blue-700 shadow-xl shadow-blue-100">+ 새 대회</button>}
+                    {!showArchived&&<button onClick={startNew} className="bg-blue-600 text-white px-4 sm:px-8 py-2.5 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-lg hover:bg-blue-700 shadow-xl shadow-blue-100">+ 새 대회</button>}
                   </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                  {userTournaments.filter(t=>!!t.isArchived===showArchived).map(t=>(
-                    <div key={t.id} className="bg-white rounded-[2.5rem] border-2 border-slate-100 p-8 hover:border-blue-400 hover:shadow-xl transition-all flex flex-col group relative overflow-hidden">
-                      <span className="text-4xl">{SPORTS_LIST.find(s=>s.id===t.config?.sport)?.icon}</span>
-                      <h3 className="text-xl font-black text-slate-900 mt-4 truncate">{t.config?.name||'무제'}</h3>
-                      <p className="text-[12px] font-black text-slate-400 uppercase mt-1">{t.config?.tournamentType} / {t.config?.matchType}</p>
+
+                {/* 📁 폴더 + 즐겨찾기 + 필터 영역 (활성 대회만) */}
+                {!showArchived&&(()=>{
+                  const folderList = Object.values(folders).sort((a,b)=>(a.order||0)-(b.order||0));
+                  const activeTours = userTournaments.filter(t=>!t.isArchived);
+                  const favTours = activeTours.filter(t=>favorites.includes(t.id));
+                  const noFolderTours = activeTours.filter(t=>!t.folderId);
+
+                  const FOLDER_COLOR_MAP = {
+                    blue: { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700', hover: 'hover:border-blue-400', selBg: 'bg-blue-500', selText: 'text-white' },
+                    purple: { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700', hover: 'hover:border-purple-400', selBg: 'bg-purple-500', selText: 'text-white' },
+                    pink: { bg: 'bg-pink-50', border: 'border-pink-200', text: 'text-pink-700', hover: 'hover:border-pink-400', selBg: 'bg-pink-500', selText: 'text-white' },
+                    red: { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-700', hover: 'hover:border-red-400', selBg: 'bg-red-500', selText: 'text-white' },
+                    amber: { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-700', hover: 'hover:border-amber-400', selBg: 'bg-amber-500', selText: 'text-white' },
+                    green: { bg: 'bg-green-50', border: 'border-green-200', text: 'text-green-700', hover: 'hover:border-green-400', selBg: 'bg-green-500', selText: 'text-white' },
+                    teal: { bg: 'bg-teal-50', border: 'border-teal-200', text: 'text-teal-700', hover: 'hover:border-teal-400', selBg: 'bg-teal-500', selText: 'text-white' },
+                    slate: { bg: 'bg-slate-50', border: 'border-slate-200', text: 'text-slate-700', hover: 'hover:border-slate-400', selBg: 'bg-slate-700', selText: 'text-white' }
+                  };
+
+                  return (
+                    <div className="space-y-4">
+                      {/* 필터 칩들 */}
+                      <div className="flex flex-wrap gap-2 items-center">
+                        <button onClick={()=>setCurrentFolderId(null)}
+                          className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-full font-black text-xs sm:text-sm border-2 transition-all ${currentFolderId===null?'bg-slate-900 text-white border-slate-900':'bg-white text-slate-600 border-slate-200 hover:border-slate-400'}`}>
+                          📋 전체 ({activeTours.length})
+                        </button>
+                        {favTours.length>0&&(
+                          <button onClick={()=>setCurrentFolderId('__favorites')}
+                            className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-full font-black text-xs sm:text-sm border-2 transition-all ${currentFolderId==='__favorites'?'bg-yellow-400 text-white border-yellow-400':'bg-white text-yellow-700 border-yellow-200 hover:border-yellow-400'}`}>
+                            ⭐ 즐겨찾기 ({favTours.length})
+                          </button>
+                        )}
+                        {folderList.map(f=>{
+                          const cm = FOLDER_COLOR_MAP[f.color] || FOLDER_COLOR_MAP.blue;
+                          const cnt = activeTours.filter(t=>t.folderId===f.id).length;
+                          const sel = currentFolderId===f.id;
+                          return (
+                            <button key={f.id} onClick={()=>setCurrentFolderId(f.id)}
+                              className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-full font-black text-xs sm:text-sm border-2 transition-all flex items-center gap-1.5 ${sel?cm.selBg+' '+cm.selText+' border-transparent':'bg-white '+cm.text+' '+cm.border+' '+cm.hover}`}>
+                              <span>{f.icon||'📁'}</span>
+                              <span className="truncate max-w-[120px]">{f.name}</span>
+                              <span className="opacity-70">({cnt})</span>
+                            </button>
+                          );
+                        })}
+                        {currentFolderId&&currentFolderId!=='__favorites'&&folders[currentFolderId]&&(
+                          <button onClick={()=>setEditingFolder(folders[currentFolderId])}
+                            className="px-2 py-1.5 sm:py-2 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 text-xs sm:text-sm font-black">✏️ 편집</button>
+                        )}
+                        <button onClick={()=>setEditingFolder({})}
+                          className="px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-blue-50 text-blue-600 border-2 border-blue-200 hover:border-blue-400 font-black text-xs sm:text-sm">
+                          + 폴더
+                        </button>
+                      </div>
+
+                      {/* 폴더 안내 (폴더 없고 활성 대회 있을 때만) */}
+                      {folderList.length===0&&activeTours.length>=3&&currentFolderId===null&&(
+                        <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-4 flex items-center gap-3">
+                          <span className="text-2xl">💡</span>
+                          <div className="flex-1">
+                            <p className="font-black text-blue-900 text-sm">대회가 많아지면 폴더로 정리해보세요</p>
+                            <p className="text-xs text-blue-600">학년별, 종목별, 학기별로 묶으면 관리가 편해요</p>
+                          </div>
+                          <button onClick={()=>setEditingFolder({})} className="bg-blue-600 text-white px-3 py-2 rounded-lg font-black text-xs hover:bg-blue-700">폴더 만들기</button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* 대회 카드 그리드 */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-8">
+                  {userTournaments.filter(t=>{
+                    if(!!t.isArchived!==showArchived) return false;
+                    if(showArchived) return true; // 보관함은 폴더 무시
+                    if(currentFolderId===null) return true;
+                    if(currentFolderId==='__favorites') return favorites.includes(t.id);
+                    return t.folderId === currentFolderId;
+                  }).map(t=>{
+                    const isFav = favorites.includes(t.id);
+                    const folderObj = t.folderId ? folders[t.folderId] : null;
+                    return (
+                    <div key={t.id} className="bg-white rounded-2xl sm:rounded-[2.5rem] border-2 border-slate-100 p-4 sm:p-8 hover:border-blue-400 hover:shadow-xl transition-all flex flex-col group relative overflow-hidden">
+                      <div className="flex justify-between items-start gap-2">
+                        <span className="text-3xl sm:text-4xl">{SPORTS_LIST.find(s=>s.id===t.config?.sport)?.icon}</span>
+                        <div className="flex gap-1">
+                          {!t.isArchived&&(
+                            <button onClick={(e)=>toggleFavorite(t.id,e)}
+                              className={`w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center transition-all active:scale-90 ${isFav?'bg-yellow-100 text-yellow-500 hover:bg-yellow-200':'bg-slate-50 text-slate-300 hover:bg-yellow-50 hover:text-yellow-400'}`}
+                              title={isFav?'즐겨찾기 해제':'즐겨찾기'}>
+                              <span className="text-base sm:text-lg">{isFav?'★':'☆'}</span>
+                            </button>
+                          )}
+                          {!t.isArchived&&(
+                            <button onClick={(e)=>{e.stopPropagation();handleDelete(t.id,e);}} className="w-8 h-8 sm:w-9 sm:h-9 border-2 border-red-500 bg-white rounded-xl flex items-center justify-center text-red-500 hover:bg-red-600 hover:text-white transition-all shadow-md active:scale-90" title="대회 영구 삭제">
+                              <span className="font-black text-base sm:text-lg">✕</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <h3 className="text-lg sm:text-xl font-black text-slate-900 mt-3 sm:mt-4 truncate">{t.config?.name||'무제'}</h3>
+                      <p className="text-[11px] sm:text-[12px] font-black text-slate-400 uppercase mt-1">{t.config?.tournamentType} / {t.config?.matchType}</p>
                       {isSetsGame(t.config?.sport)&&(
-                        <p className="text-[12px] font-black text-blue-500 uppercase mt-1">
+                        <p className="text-[11px] sm:text-[12px] font-black text-blue-500 uppercase mt-1">
                           {(t.config?.sets||3)===1?'단판제':`${t.config?.sets||3}판 ${Math.ceil((t.config?.sets||3)/2)}선승`}
                         </p>
                       )}
-                      <div className="mt-8 grid grid-cols-2 gap-2">
+                      {folderObj&&!t.isArchived&&(
+                        <button onClick={()=>setMoveDialogTour(t)} className="mt-2 inline-flex items-center gap-1 text-[11px] font-black text-slate-500 bg-slate-50 hover:bg-slate-100 px-2 py-1 rounded-lg self-start">
+                          <span>{folderObj.icon||'📁'}</span>
+                          <span className="truncate max-w-[100px]">{folderObj.name}</span>
+                        </button>
+                      )}
+                      <div className="mt-4 sm:mt-8 grid grid-cols-2 gap-2">
                         {t.isArchived?(
                           <>
                             <button onClick={()=>loadTournamentData(t)} className="bg-slate-900 text-white py-2.5 rounded-xl font-black text-sm hover:bg-slate-800 col-span-2">관리</button>
@@ -2885,24 +3251,51 @@
                           <>
                             <button onClick={()=>loadTournamentData(t)} className="bg-slate-900 text-white py-2.5 rounded-xl font-black text-sm hover:bg-slate-800">관리</button>
                             <button onClick={(e)=>handleShare(t,e)} className="bg-blue-50 text-blue-600 py-2.5 rounded-xl font-black text-sm hover:bg-blue-100">공유</button>
-                            <button onClick={(e)=>toggleArchive(t.id,e)} className="bg-slate-50 text-slate-500 py-2.5 rounded-xl font-black text-sm hover:bg-slate-200 col-span-2">보관함으로</button>
+                            <button onClick={()=>setMoveDialogTour(t)} className="bg-purple-50 text-purple-600 py-2.5 rounded-xl font-black text-sm hover:bg-purple-100">📂 폴더</button>
+                            <button onClick={(e)=>toggleArchive(t.id,e)} className="bg-slate-50 text-slate-500 py-2.5 rounded-xl font-black text-sm hover:bg-slate-200">보관</button>
                           </>
                         )}
                       </div>
-                      {!t.isArchived&&(
-                        <button onClick={(e)=>handleDelete(t.id,e)} className="absolute top-6 right-6 w-9 h-9 border-2 border-red-500 bg-white rounded-xl flex items-center justify-center text-red-500 hover:bg-red-600 hover:text-white transition-all shadow-md active:scale-90 z-20 group-hover:scale-110" title="대회 영구 삭제">
-                          <span className="font-black text-lg">✕</span>
-                        </button>
-                      )}
-                      {t.isCompleted&&<div className="absolute top-6 right-16 bg-green-100 text-green-700 text-[11px] font-black px-2 py-1 rounded-full uppercase">Finished</div>}
+                      {t.isCompleted&&<div className="absolute top-3 right-20 sm:top-6 sm:right-24 bg-green-100 text-green-700 text-[10px] sm:text-[11px] font-black px-2 py-1 rounded-full uppercase">Finished</div>}
                     </div>
-                  ))}
-                  {userTournaments.filter(t=>!!t.isArchived===showArchived).length===0&&(
-                    <div className="col-span-full py-24 text-center border-2 border-dashed rounded-[3rem] text-slate-300 font-bold bg-slate-50/30">
-                      {showArchived?'보관된 대회가 없습니다.':'대회가 없습니다. 상단 "+ 새 대회" 버튼을 눌러 시작하세요!'}
+                    );
+                  })}
+                  {userTournaments.filter(t=>{
+                    if(!!t.isArchived!==showArchived) return false;
+                    if(showArchived) return true;
+                    if(currentFolderId===null) return true;
+                    if(currentFolderId==='__favorites') return favorites.includes(t.id);
+                    return t.folderId === currentFolderId;
+                  }).length===0&&(
+                    <div className="col-span-full py-16 sm:py-24 text-center border-2 border-dashed rounded-2xl sm:rounded-[3rem] text-slate-300 font-bold bg-slate-50/30">
+                      {showArchived?'보관된 대회가 없습니다.':
+                        currentFolderId==='__favorites'?'⭐ 즐겨찾기 대회가 없습니다.\n대회 카드의 ☆를 눌러 등록하세요.':
+                        currentFolderId?'이 폴더에 대회가 없습니다.\n대회 카드의 📂 버튼으로 이동하세요.':
+                        '대회가 없습니다. 상단 "+ 새 대회" 버튼을 눌러 시작하세요!'}
                     </div>
                   )}
                 </div>
+
+                {/* 폴더 편집 모달 */}
+                {editingFolder&&(
+                  <FolderEditModal
+                    folder={editingFolder}
+                    onSave={handleSaveFolder}
+                    onClose={()=>setEditingFolder(null)}
+                    onDelete={handleDeleteFolder}
+                  />
+                )}
+
+                {/* 폴더로 이동 모달 */}
+                {moveDialogTour&&(
+                  <MoveToFolderModal
+                    tournament={moveDialogTour}
+                    folders={folders}
+                    onMove={handleMoveTournament}
+                    onClose={()=>setMoveDialogTour(null)}
+                    onCreateFolder={()=>setEditingFolder({})}
+                  />
+                )}
               </div>
             )}
 
