@@ -1,7 +1,7 @@
 // MatchMaker Pro Service Worker
 // 오프라인 모드 지원 + 빠른 로딩을 위한 캐시 관리
 
-const CACHE_VERSION = 'matchmaker-pro-v1.0.8';
+const CACHE_VERSION = 'matchmaker-pro-v1.0.9';
 const CACHE_NAME = `${CACHE_VERSION}-static`;
 
 // 앱 핵심 파일
