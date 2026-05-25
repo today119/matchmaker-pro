@@ -2456,6 +2456,7 @@
       const [folders, setFolders] = useState({});           // 📁 폴더들
       const [favorites, setFavorites] = useState([]);       // ⭐ 즐겨찾기 ID들
       const [currentFolderId, setCurrentFolderId] = useState(null); // 선택된 폴더 (null=전체)
+      const [expandedFolders, setExpandedFolders] = useState({});   // 어떤 폴더가 펼쳐졌는지
       const [showFolderModal, setShowFolderModal] = useState(false); // 폴더 관리 모달
       const [editingFolder, setEditingFolder] = useState(null); // 편집 중인 폴더
       const [moveDialogTour, setMoveDialogTour] = useState(null); // 이동할 대회
@@ -3271,19 +3272,20 @@
                     };
 
                     const showCount = 3; // 미리보기에 보일 미니 카드 개수
-                    const visibleTours = folderTours.slice(0, showCount);
+                    const isExpanded = !!expandedFolders[f.id];
+                    const visibleTours = isExpanded ? folderTours : folderTours.slice(0, showCount);
                     const moreCount = Math.max(0, folderTours.length - showCount);
 
                     return (
-                      <div key={f.id} onClick={()=>setCurrentFolderId(f.id)}
-                        className={`rounded-2xl sm:rounded-[2.5rem] border-2 ${cm.border} ${cm.bg} p-4 sm:p-5 hover:shadow-xl ${cm.hover} transition-all flex flex-col cursor-pointer active:scale-[0.98] relative group`}>
-                        {/* 헤더 */}
-                        <div className="flex justify-between items-start gap-2 mb-3">
+                      <div key={f.id}
+                        className={`rounded-2xl sm:rounded-[2.5rem] border-2 ${cm.border} ${cm.bg} p-4 sm:p-5 hover:shadow-xl ${cm.hover} transition-all flex flex-col relative group`}>
+                        {/* 헤더 — 클릭하면 폴더 진입 */}
+                        <div onClick={()=>setCurrentFolderId(f.id)} className="flex justify-between items-start gap-2 mb-3 cursor-pointer active:scale-[0.98] transition-transform">
                           <div className="flex items-center gap-2 min-w-0 flex-1">
                             <span className="text-2xl sm:text-3xl shrink-0">{f.icon||'📁'}</span>
                             <div className="min-w-0">
                               <h3 className={`text-base sm:text-lg font-black ${cm.text} truncate`}>{f.name}</h3>
-                              <p className="text-[10px] sm:text-[11px] font-black text-slate-500 uppercase">{folderTours.length}개 대회</p>
+                              <p className="text-[10px] sm:text-[11px] font-black text-slate-500 uppercase">{folderTours.length}개 대회 · 열기 →</p>
                             </div>
                           </div>
                           <button onClick={(e)=>{e.stopPropagation();setEditingFolder(f);}}
@@ -3300,11 +3302,15 @@
                               아직 대회가 없습니다
                             </div>
                           ) : (
-                            visibleTours.map(t=>{
+                            visibleTours.map((t,i)=>{
                               const status = getStatusInfo(t);
                               const icon = SPORTS_LIST.find(s=>s.id===t.config?.sport)?.icon||'🏆';
                               return (
-                                <div key={t.id} className="bg-white/80 hover:bg-white rounded-xl p-2 sm:p-2.5 flex items-center gap-2 sm:gap-3 transition-all">
+                                <div key={t.id}
+                                  onClick={(e)=>{e.stopPropagation();loadTournamentData(t);}}
+                                  className="bg-white/80 hover:bg-white rounded-xl p-2 sm:p-2.5 flex items-center gap-2 sm:gap-3 transition-all cursor-pointer active:scale-[0.98] animate-fade-in"
+                                  style={{animationDelay: i>=showCount?`${(i-showCount)*40}ms`:'0ms'}}
+                                  title="대회 열기">
                                   <span className="text-lg sm:text-xl shrink-0">{icon}</span>
                                   <div className="flex-1 min-w-0">
                                     <p className="text-xs sm:text-sm font-black text-slate-800 truncate">{t.config?.name||'무제'}</p>
@@ -3317,9 +3323,10 @@
                             })
                           )}
                           {moreCount>0 && (
-                            <div className="text-center text-[11px] sm:text-xs font-black text-slate-500 pt-1">
-                              + {moreCount}개 더 보기
-                            </div>
+                            <button onClick={(e)=>{e.stopPropagation();setExpandedFolders(prev=>({...prev,[f.id]:!prev[f.id]}));}}
+                              className="w-full text-center text-[11px] sm:text-xs font-black text-slate-500 hover:text-slate-700 hover:bg-white/40 rounded-lg py-1.5 pt-1 transition-all">
+                              {isExpanded ? '▲ 접기' : `▼ + ${moreCount}개 더 보기`}
+                            </button>
                           )}
                         </div>
                       </div>
