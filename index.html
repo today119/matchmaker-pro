@@ -53,10 +53,12 @@
     // 앱 자기 자신의 URL (해시 제외) — 공유 링크 생성에 사용
     window.APP_BASE_URL = window.location.origin + window.location.pathname;
 
-    // GAS Web App URL — 구글 시트 연동(명단/결과 내보내기)에만 사용
-    // ⚠️ 본인의 GAS 배포 URL(/exec)로 교체하세요. 비워두면 시트 연동 버튼 사용 시 오류.
-    // GAS_API_URL — 시트 내보내기 기능용. 빈 문자열이면 버튼 숨김
-    window.GAS_API_URL = 'https://script.google.com/macros/s/AKfycbw9s3SnfPNm_IadrU9csVZQOO6-9_z91dNp4r3uRNRY_REROqDp4Y7Uedna6EmDGgEO/exec';
+    // GAS Web App URL & 시트 URL — localStorage에 저장 (도움말 페이지에서 설정 가능)
+    // 기본값은 김선빵 운영 환경. 다른 사용자는 도움말 페이지에서 본인 것으로 교체
+    const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw9s3SnfPNm_IadrU9csVZQOO6-9_z91dNp4r3uRNRY_REROqDp4Y7Uedna6EmDGgEO/exec';
+    const DEFAULT_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1CwzH6sgSndczhuk_RL4S4PctvqtjF6Wg-uonyq3AJy4/edit';
+    window.GAS_API_URL = localStorage.getItem('matchmaker_gas_url') || DEFAULT_GAS_URL;
+    window.SHEET_URL = localStorage.getItem('matchmaker_sheet_url') || DEFAULT_SHEET_URL;
   </script>
 
   <script type="text/babel" data-presets="react">
@@ -2435,6 +2437,287 @@
     };
 
     // ================================================================
+    //  📚 HelpView — 도움말 페이지 (구글 시트 연동 가이드)
+    // ================================================================
+    const CODE_GS_CONTENT = `// MatchMaker Pro — Google Apps Script
+// 구글 시트와 매치메이커를 연동하는 백엔드 코드
+// 매치메이커 도움말 페이지에서 자동 복사됨
+
+function doGet(e) {
+  return jsonOut({ success: true, message: 'MatchMaker Pro GAS API. Use POST.' });
+}
+
+function doPost(e) {
+  let body = {};
+  try {
+    body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+  } catch (err) {
+    return jsonOut({ success: false, error: 'Invalid JSON body' });
+  }
+  return handleRequest(body.action, body);
+}
+
+function jsonOut(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function handleRequest(action, params) {
+  params = params || {};
+  try {
+    switch (action) {
+      case 'ping':
+        return jsonOut({ success: true, time: Date.now() });
+      case 'exportToSheets':
+        return jsonOut(exportToSheets(params.data));
+      case 'exportAllTournaments':
+        return jsonOut(exportAllTournaments(params.tournaments));
+      case 'getSheetUrl':
+        return jsonOut(getSheetUrl());
+      case 'createParticipantSheet':
+        return jsonOut(createParticipantSheet(params.tournamentName));
+      case 'getParticipantsFromSheet':
+        return jsonOut(getParticipantsFromSheet(params.tournamentName));
+      case 'saveParticipantsToSheet':
+        return jsonOut(saveParticipantsToSheet(params.tournamentName, params.participants));
+      default:
+        return jsonOut({ success: false, error: 'Unknown action: ' + action });
+    }
+  } catch (err) {
+    return jsonOut({ success: false, error: err && err.toString ? err.toString() : 'Server error' });
+  }
+}
+
+function getSheetUrl() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  return { success: true, url: ss.getUrl(), name: ss.getName() };
+}
+
+// (참고: 실제 Code.gs 전체 내용은 매치메이커 GitHub 저장소를 참조하세요.
+//  여기에는 핵심 구조만 표시됩니다. 완전한 코드는 다운로드 링크로 받으세요.)
+`;
+
+    const HelpView = ({ onBack }) => {
+      const [gasUrl, setGasUrl] = useState(window.GAS_API_URL || '');
+      const [sheetUrl, setSheetUrl] = useState(window.SHEET_URL || '');
+      const [savedMsg, setSavedMsg] = useState('');
+      const [copyMsg, setCopyMsg] = useState('');
+
+      const saveSettings = () => {
+        // 검증
+        const gasOk = !gasUrl || gasUrl.includes('script.google.com/macros/');
+        const sheetOk = !sheetUrl || sheetUrl.includes('docs.google.com/spreadsheets/');
+        if(gasUrl && !gasOk){ alert('❌ GAS URL이 올바르지 않습니다.\nhttps://script.google.com/macros/s/.../exec 형식이어야 합니다.'); return; }
+        if(sheetUrl && !sheetOk){ alert('❌ 시트 URL이 올바르지 않습니다.\nhttps://docs.google.com/spreadsheets/d/.../edit 형식이어야 합니다.'); return; }
+
+        localStorage.setItem('matchmaker_gas_url', gasUrl);
+        localStorage.setItem('matchmaker_sheet_url', sheetUrl);
+        window.GAS_API_URL = gasUrl;
+        window.SHEET_URL = sheetUrl;
+        setSavedMsg('✅ 설정이 저장되었습니다!');
+        setTimeout(()=>setSavedMsg(''), 3000);
+      };
+
+      const copyCode = async () => {
+        try {
+          await navigator.clipboard.writeText(CODE_GS_CONTENT);
+          setCopyMsg('✅ 클립보드에 복사됨!');
+          setTimeout(()=>setCopyMsg(''), 3000);
+        } catch(e){
+          // fallback
+          const textarea = document.createElement('textarea');
+          textarea.value = CODE_GS_CONTENT;
+          document.body.appendChild(textarea);
+          textarea.select();
+          document.execCommand('copy');
+          document.body.removeChild(textarea);
+          setCopyMsg('✅ 복사됨!');
+          setTimeout(()=>setCopyMsg(''), 3000);
+        }
+      };
+
+      return (
+        <div className="max-w-3xl mx-auto space-y-6 animate-fade-in pb-12">
+          {/* 헤더 */}
+          <div className="flex items-center justify-between">
+            <button onClick={onBack} className="text-slate-500 hover:text-slate-800 font-bold text-sm flex items-center gap-1">
+              ← 대시보드로
+            </button>
+            <h2 className="text-xl sm:text-2xl font-black italic text-slate-800">📚 도움말 / 설정</h2>
+            <div className="w-20"></div>
+          </div>
+
+          {/* 환영 메시지 */}
+          <section className="bg-gradient-to-br from-blue-50 to-purple-50 p-6 rounded-2xl border-2 border-blue-100">
+            <h3 className="text-lg font-black text-slate-800 mb-2">🎉 MatchMaker Pro에 오신 것을 환영합니다!</h3>
+            <p className="text-sm text-slate-600 leading-relaxed">
+              매치메이커는 토너먼트/리그/조별 경기를 손쉽게 관리하는 도구입니다.<br/>
+              구글 시트와 연동하면 <strong>경기 결과 자동 저장</strong>, <strong>명단 일괄 입력</strong>이 가능합니다.<br/>
+              아래 단계를 따라 설정하세요. (약 5분 소요)
+            </p>
+          </section>
+
+          {/* ⭐ 시트 연동 설정 (가장 중요한 영역) */}
+          <section className="bg-white p-6 rounded-2xl border-2 border-amber-200 shadow-sm">
+            <h3 className="text-lg font-black text-amber-700 mb-1">⚙️ 시트 연동 설정</h3>
+            <p className="text-xs text-slate-500 mb-4">아래 두 URL을 입력하면 시트 내보내기/바로가기 기능이 활성화됩니다.</p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-[12px] font-black text-slate-500 uppercase tracking-widest">📊 구글 시트 URL <span className="text-amber-600 normal-case">(시트 바로가기 버튼용)</span></label>
+                <input type="text" value={sheetUrl} onChange={e=>setSheetUrl(e.target.value)}
+                  placeholder="https://docs.google.com/spreadsheets/d/.../edit"
+                  className="w-full mt-2 p-3 bg-slate-50 border-2 border-slate-200 focus:border-amber-500 rounded-xl font-bold text-sm outline-none"/>
+              </div>
+              <div>
+                <label className="text-[12px] font-black text-slate-500 uppercase tracking-widest">🔧 Apps Script 배포 URL <span className="text-amber-600 normal-case">(시트 내보내기용)</span></label>
+                <input type="text" value={gasUrl} onChange={e=>setGasUrl(e.target.value)}
+                  placeholder="https://script.google.com/macros/s/.../exec"
+                  className="w-full mt-2 p-3 bg-slate-50 border-2 border-slate-200 focus:border-amber-500 rounded-xl font-bold text-sm outline-none"/>
+              </div>
+
+              <button onClick={saveSettings}
+                className="w-full bg-amber-500 hover:bg-amber-600 text-white py-3 rounded-xl font-black shadow-md">
+                💾 설정 저장
+              </button>
+              {savedMsg && <p className="text-center text-sm font-black text-green-600">{savedMsg}</p>}
+            </div>
+          </section>
+
+          {/* 1단계: 시트 만들기 */}
+          <section className="bg-white p-6 rounded-2xl border border-slate-200">
+            <h3 className="text-lg font-black text-slate-800 mb-3">
+              <span className="inline-block bg-blue-500 text-white w-7 h-7 rounded-lg text-center mr-2 text-sm leading-7">1</span>
+              구글 스프레드시트 만들기
+            </h3>
+            <ol className="space-y-2 text-sm text-slate-700 leading-relaxed ml-2">
+              <li><a href="https://sheets.new" target="_blank" rel="noopener noreferrer" className="text-blue-600 font-black hover:underline">→ sheets.new</a> 접속 (새 시트가 즉시 생성됨)</li>
+              <li>또는 구글 드라이브 → 새로 만들기 → 구글 스프레드시트</li>
+              <li>시트 이름을 원하는 대로 변경 (예: <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs">매치메이커 대회 기록</code>)</li>
+              <li>주소창의 URL을 복사 → 위쪽 <strong>"구글 시트 URL"</strong> 칸에 붙여넣기</li>
+            </ol>
+          </section>
+
+          {/* 2단계: Apps Script 열기 */}
+          <section className="bg-white p-6 rounded-2xl border border-slate-200">
+            <h3 className="text-lg font-black text-slate-800 mb-3">
+              <span className="inline-block bg-blue-500 text-white w-7 h-7 rounded-lg text-center mr-2 text-sm leading-7">2</span>
+              Apps Script 열기
+            </h3>
+            <ol className="space-y-2 text-sm text-slate-700 leading-relaxed ml-2">
+              <li>스프레드시트 메뉴에서 <strong>확장 프로그램 → Apps Script</strong> 클릭</li>
+              <li>새 탭에 코드 편집기가 열립니다</li>
+              <li>기본으로 있는 <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs">function myFunction() &#123;&#125;</code> 코드는 모두 삭제 (Ctrl+A → Delete)</li>
+            </ol>
+          </section>
+
+          {/* 3단계: 코드 복사 */}
+          <section className="bg-white p-6 rounded-2xl border border-slate-200">
+            <h3 className="text-lg font-black text-slate-800 mb-3">
+              <span className="inline-block bg-blue-500 text-white w-7 h-7 rounded-lg text-center mr-2 text-sm leading-7">3</span>
+              Code.gs 코드 복사 & 붙여넣기
+            </h3>
+            <p className="text-sm text-slate-600 mb-3">아래 버튼을 누르면 매치메이커 전용 코드가 클립보드에 복사됩니다.</p>
+            <button onClick={copyCode}
+              className="w-full bg-slate-800 hover:bg-slate-900 text-white py-4 rounded-xl font-black flex items-center justify-center gap-2 shadow-md">
+              📋 Code.gs 전체 코드 복사하기
+            </button>
+            {copyMsg && <p className="mt-3 text-center text-sm font-black text-green-600">{copyMsg}</p>}
+            <div className="mt-3 p-3 bg-blue-50 border border-blue-100 rounded-xl">
+              <p className="text-xs text-blue-800 leading-relaxed">
+                💡 <strong>주의</strong>: 위 버튼은 핵심 구조만 복사합니다. 전체 코드(약 350줄)는 GitHub 저장소에 있습니다:<br/>
+                <a href="https://github.com/today119/matchmaker-pro/blob/main/Code.gs" target="_blank" rel="noopener noreferrer" className="text-blue-600 font-black hover:underline break-all">
+                  github.com/today119/matchmaker-pro/blob/main/Code.gs
+                </a>
+              </p>
+            </div>
+            <ol className="mt-4 space-y-2 text-sm text-slate-700 leading-relaxed ml-2">
+              <li>위 복사 버튼 또는 GitHub에서 전체 코드 복사</li>
+              <li>Apps Script 편집기에 붙여넣기 (Ctrl+V)</li>
+              <li><strong>Ctrl+S</strong> 또는 💾 아이콘으로 저장</li>
+            </ol>
+          </section>
+
+          {/* 4단계: 배포 */}
+          <section className="bg-white p-6 rounded-2xl border border-slate-200">
+            <h3 className="text-lg font-black text-slate-800 mb-3">
+              <span className="inline-block bg-blue-500 text-white w-7 h-7 rounded-lg text-center mr-2 text-sm leading-7">4</span>
+              웹앱으로 배포하기 (가장 중요)
+            </h3>
+            <ol className="space-y-2 text-sm text-slate-700 leading-relaxed ml-2">
+              <li>Apps Script 편집기 우측 상단 <strong>[배포]</strong> 버튼 클릭</li>
+              <li><strong>[새 배포]</strong> 선택</li>
+              <li>⚙️ 톱니바퀴 → <strong>웹 앱</strong> 선택</li>
+              <li>설정:
+                <ul className="ml-4 mt-1 space-y-1 text-xs">
+                  <li>• 설명: <code className="bg-slate-100 px-1 rounded">매치메이커 v1</code></li>
+                  <li>• 다음 사용자로 실행: <strong>나</strong></li>
+                  <li>• 액세스 권한: <strong className="text-red-600">모든 사용자</strong> ⚠️ (반드시!)</li>
+                </ul>
+              </li>
+              <li><strong>[배포]</strong> 클릭</li>
+              <li>처음에는 권한 요청 → <strong>액세스 승인</strong> → 본인 계정 → <strong>고급 → 안전하지 않은 페이지로 이동 → 허용</strong></li>
+              <li>배포 완료 후 <strong>웹 앱 URL</strong>이 표시됩니다 (예: <code className="text-xs bg-slate-100 px-1 rounded">https://script.google.com/macros/s/AKfy.../exec</code>)</li>
+              <li>이 URL을 복사 → 위쪽 <strong>"Apps Script 배포 URL"</strong> 칸에 붙여넣기</li>
+              <li>설정 저장 → 완료! 🎉</li>
+            </ol>
+          </section>
+
+          {/* 5단계: 테스트 */}
+          <section className="bg-white p-6 rounded-2xl border border-slate-200">
+            <h3 className="text-lg font-black text-slate-800 mb-3">
+              <span className="inline-block bg-green-500 text-white w-7 h-7 rounded-lg text-center mr-2 text-sm leading-7">✓</span>
+              연동 테스트
+            </h3>
+            <ol className="space-y-2 text-sm text-slate-700 leading-relaxed ml-2">
+              <li>대시보드로 돌아가서 <strong>🔗 시트 바로가기</strong> 클릭 → 시트가 새 탭에 열리면 ✅</li>
+              <li>대회를 하나 진행 후 상단 <strong>📊 시트</strong> 버튼 클릭 → 시트에 결과 저장되면 ✅</li>
+              <li><strong>📤 전체 시트 내보내기</strong>로 모든 대회 한 번에 백업 가능</li>
+            </ol>
+          </section>
+
+          {/* FAQ */}
+          <section className="bg-slate-50 p-6 rounded-2xl border border-slate-200">
+            <h3 className="text-lg font-black text-slate-800 mb-3">❓ 자주 묻는 질문</h3>
+            <div className="space-y-4 text-sm">
+              <div>
+                <p className="font-black text-slate-700">Q. "GAS HTTP 401" 또는 "JSON이 아닙니다" 오류가 떠요</p>
+                <p className="text-slate-600 mt-1">A. 배포 시 액세스 권한을 <strong>"모든 사용자"</strong>로 설정해야 합니다. 배포 관리 → 편집 → 권한 확인 → 새 버전으로 재배포.</p>
+              </div>
+              <div>
+                <p className="font-black text-slate-700">Q. 코드 수정 후 반영이 안 돼요</p>
+                <p className="text-slate-600 mt-1">A. Apps Script에서 코드 저장 후 반드시 <strong>배포 → 배포 관리 → ✏️ 편집 → 새 버전 → 배포</strong>를 다시 해야 합니다.</p>
+              </div>
+              <div>
+                <p className="font-black text-slate-700">Q. 시트 바로가기를 눌렀는데 다른 시트가 열려요</p>
+                <p className="text-slate-600 mt-1">A. 위쪽 "구글 시트 URL"이 잘못 입력됐습니다. 시트 주소창의 URL을 그대로 복사해서 다시 저장하세요.</p>
+              </div>
+              <div>
+                <p className="font-black text-slate-700">Q. 구글 시트 없이도 사용할 수 있나요?</p>
+                <p className="text-slate-600 mt-1">A. 네. 시트 연동 없이도 대회 관리/공유는 모두 작동합니다. 시트 연동은 결과 백업/기록부 작성용 보조 기능입니다.</p>
+              </div>
+              <div>
+                <p className="font-black text-slate-700">Q. 데이터는 어디에 저장되나요?</p>
+                <p className="text-slate-600 mt-1">A. Firebase 클라우드 + 브라우저 localStorage에 자동 저장됩니다. 인터넷 끊겨도 작동하며, 다시 연결되면 동기화됩니다.</p>
+              </div>
+            </div>
+          </section>
+
+          {/* 정보 */}
+          <section className="text-center text-xs text-slate-400 py-4">
+            <p>MatchMaker Pro by 김선빵 (인천영종고)</p>
+            <p className="mt-1">
+              <a href="https://github.com/today119/matchmaker-pro" target="_blank" rel="noopener noreferrer" className="text-slate-500 hover:text-slate-700 hover:underline">
+                GitHub 저장소
+              </a>
+            </p>
+          </section>
+        </div>
+      );
+    };
+
+    // ================================================================
     //  🔓 PasswordPromptModal — 공유 페이지 편집 모드 비밀번호 입력
     // ================================================================
     const PasswordPromptModal = ({ correctPassword, onSuccess, onClose }) => {
@@ -2526,6 +2809,25 @@
       const isGroupType = config.tournamentType===TType.GROUP_KNOCKOUT||config.tournamentType===TType.GROUP_LEAGUE;
       // 🔓 편집 가능 여부 — share 모드여도 비번 인증되면 true
       const canEdit = view!=='share' || shareEditMode;
+
+      // ── 🔙 브라우저 뒤로가기 인터셉트 ──────────────────
+      // 대시보드 외의 화면에서 뒤로가기 누르면 → 대시보드로 (이전 사이트로 안 감)
+      useEffect(()=>{
+        // share 모드는 외부 링크로 온 거니까 인터셉트 X (사용자가 원래 사이트로 돌아갈 수 있게)
+        if(view==='dashboard'||view==='share') return;
+
+        // history에 가짜 항목 추가 (뒤로가기 캐치용)
+        window.history.pushState({mmView:view}, '', window.location.href);
+
+        const handlePopState = () => {
+          // 대회/설정 화면에서 뒤로가기 → 대시보드로
+          setView('dashboard');
+          setCurrentId(null);
+        };
+
+        window.addEventListener('popstate', handlePopState);
+        return () => window.removeEventListener('popstate', handlePopState);
+      }, [view]);
 
       // ── 초기 로드 + 실시간 리스너 ──────────────────────
       useEffect(()=>{
@@ -3110,6 +3412,12 @@
                 </h1>
               </button>
               <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                {view==='dashboard'&&(
+                  <button onClick={()=>setView('help')} title="도움말 / 시트 연동 설정"
+                    className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center text-lg transition-all">
+                    ❓
+                  </button>
+                )}
                 {saving&&<span className="hidden sm:inline text-[12px] font-black text-slate-400 animate-pulse uppercase">저장 중...</span>}
                 {saving&&<span className="sm:hidden text-[10px] font-black text-slate-400 animate-pulse">💾</span>}
                 {view==='active'&&(
@@ -3172,6 +3480,9 @@
           </header>
 
           <main className="flex-1 max-w-5xl mx-auto w-full px-3 sm:px-4 py-4 sm:py-8">
+
+            {/* ──── 📚 HELP / 도움말 ──── */}
+            {view==='help'&&<HelpView onBack={()=>setView('dashboard')}/>}
 
             {/* ──── DASHBOARD ──── */}
             {view==='dashboard'&&(()=>{
@@ -3284,22 +3595,20 @@
                         <span className="sm:hidden">📤</span>
                       </button>
                     )}
-                    {/* 🔗 시트 바로가기 — PC 전용 */}
+                    {/* 🔗 시트 바로가기 — PC 전용 (동적 URL) */}
                     {!showArchived&&!currentFolderId&&(
-                      <button onClick={async ()=>{
-                        try {
-                          const r = await gasCall('getSheetUrl');
-                          if(r.success && r.url){
-                            window.open(r.url, '_blank');
-                          } else {
-                            alert('시트 URL을 가져올 수 없습니다.');
+                      <a href={window.SHEET_URL || '#'}
+                        target="_blank" rel="noopener noreferrer"
+                        onClick={(e)=>{
+                          if(!window.SHEET_URL || window.SHEET_URL==='#'){
+                            e.preventDefault();
+                            alert('시트 URL이 설정되지 않았습니다.\n도움말 페이지에서 구글 시트 URL을 등록해주세요.');
+                            setView('help');
                           }
-                        } catch(e){
-                          alert('시트 연결 실패. GAS 설정을 확인해주세요.');
-                        }
-                      }} className="hidden md:inline-flex bg-white border-2 border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-800 px-4 py-3 rounded-xl font-bold text-sm transition-all items-center">
+                        }}
+                        className="hidden md:inline-flex bg-white border-2 border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-800 px-4 py-3 rounded-xl font-bold text-sm transition-all items-center no-underline">
                         🔗 시트 바로가기
-                      </button>
+                      </a>
                     )}
                     {/* 메인 액션 — 강조 */}
                     {!showArchived&&(
