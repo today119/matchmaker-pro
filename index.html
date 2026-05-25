@@ -25,6 +25,8 @@
   <style>
     @keyframes fade-in { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
     .animate-fade-in { animation: fade-in 0.3s ease-out; }
+    @keyframes shake { 0%,100%{transform:translateX(0);} 25%{transform:translateX(-6px);} 75%{transform:translateX(6px);} }
+    .animate-shake { animation: shake 0.4s ease-in-out; }
     .custom-scrollbar::-webkit-scrollbar { width: 4px; }
     .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
     .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 999px; }
@@ -2433,6 +2435,49 @@
     };
 
     // ================================================================
+    //  🔓 PasswordPromptModal — 공유 페이지 편집 모드 비밀번호 입력
+    // ================================================================
+    const PasswordPromptModal = ({ correctPassword, onSuccess, onClose }) => {
+      const [input, setInput] = useState('');
+      const [error, setError] = useState(false);
+      const tryUnlock = () => {
+        if (input === correctPassword) {
+          onSuccess();
+        } else {
+          setError(true);
+          setTimeout(()=>setError(false), 600);
+        }
+      };
+      return (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={onClose}>
+          <div className={`bg-white rounded-2xl sm:rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden ${error?'animate-shake':''}`} onClick={e=>e.stopPropagation()}>
+            <div className="bg-amber-500 p-5 text-white text-center">
+              <p className="text-[11px] font-black text-amber-100 uppercase tracking-widest mb-1">Edit Mode</p>
+              <h3 className="text-xl font-black italic">🔓 편집 모드 진입</h3>
+              <p className="text-sm text-amber-100 mt-2">대회 운영자에게 비밀번호를 받으세요</p>
+            </div>
+            <div className="p-5 space-y-3">
+              <input type="password" value={input} onChange={e=>setInput(e.target.value)}
+                onKeyDown={e=>e.key==='Enter'&&tryUnlock()}
+                placeholder="비밀번호 입력"
+                className={`w-full p-4 bg-slate-50 border-2 rounded-xl font-black text-center text-lg outline-none ${error?'border-red-500 bg-red-50 text-red-600':'border-slate-200 focus:border-amber-500'}`}
+                autoFocus/>
+              {error && (
+                <p className="text-center text-sm font-black text-red-500">❌ 비밀번호가 틀렸습니다</p>
+              )}
+              <button onClick={tryUnlock}
+                className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-black">
+                🔓 잠금 해제
+              </button>
+              <button onClick={onClose}
+                className="w-full py-2.5 bg-slate-100 text-slate-500 rounded-xl font-bold text-sm">취소</button>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // ================================================================
     //  App — 메인 컴포넌트
     // ================================================================
     const DEFAULT_CONFIG = {
@@ -2440,6 +2485,8 @@
       teamFormat:'2D1S', teamRounds:1, sets:3,
       // 🏆 리그+본선: 각 조에서 본선에 진출할 인원수
       advancePerGroup: 2,
+      // 🔓 공유 페이지 편집 비밀번호 (빈 문자열 = 비번 없음, 항상 읽기 전용)
+      sharePassword: '',
       // 🎾 테니스 전용 옵션
       tennisGamesPerSet: 6,    // 세트당 게임수 (4/6/8)
       tennisDeuce: false,      // false=노애드 (기본), true=어드밴티지
@@ -2457,6 +2504,8 @@
       const [favorites, setFavorites] = useState([]);       // ⭐ 즐겨찾기 ID들
       const [currentFolderId, setCurrentFolderId] = useState(null); // 선택된 폴더 (null=전체)
       const [expandedFolders, setExpandedFolders] = useState({});   // 어떤 폴더가 펼쳐졌는지
+      const [shareEditMode, setShareEditMode] = useState(false);    // 공유 페이지에서 비번 인증되면 true
+      const [showPasswordModal, setShowPasswordModal] = useState(false); // 비번 입력 모달
       const [showFolderModal, setShowFolderModal] = useState(false); // 폴더 관리 모달
       const [editingFolder, setEditingFolder] = useState(null); // 편집 중인 폴더
       const [moveDialogTour, setMoveDialogTour] = useState(null); // 이동할 대회
@@ -2475,6 +2524,8 @@
       const saveTimerRef      = useRef(null);
       const remoteUpdateRef   = useRef(false);
       const isGroupType = config.tournamentType===TType.GROUP_KNOCKOUT||config.tournamentType===TType.GROUP_LEAGUE;
+      // 🔓 편집 가능 여부 — share 모드여도 비번 인증되면 true
+      const canEdit = view!=='share' || shareEditMode;
 
       // ── 초기 로드 + 실시간 리스너 ──────────────────────
       useEffect(()=>{
@@ -3095,10 +3146,26 @@
                   </>
                 )}
                 {view==='share'&&(
-                  <span className="bg-blue-50 text-blue-600 px-2 sm:px-4 py-1.5 sm:py-2 rounded-xl font-black text-[11px] sm:text-sm border border-blue-100 italic">
-                    <span className="hidden sm:inline">Shared Content (읽기 전용)</span>
-                    <span className="sm:hidden">👁 읽기 전용</span>
-                  </span>
+                  shareEditMode ? (
+                    <span className="bg-green-50 text-green-700 px-2 sm:px-4 py-1.5 sm:py-2 rounded-xl font-black text-[11px] sm:text-sm border border-green-200 italic flex items-center gap-1">
+                      <span className="hidden sm:inline">🔓 편집 가능 (인증됨)</span>
+                      <span className="sm:hidden">🔓 편집</span>
+                    </span>
+                  ) : (
+                    <div className="flex gap-2 items-center">
+                      <span className="bg-blue-50 text-blue-600 px-2 sm:px-4 py-1.5 sm:py-2 rounded-xl font-black text-[11px] sm:text-sm border border-blue-100 italic">
+                        <span className="hidden sm:inline">👁 읽기 전용</span>
+                        <span className="sm:hidden">👁</span>
+                      </span>
+                      {config.sharePassword && (
+                        <button onClick={()=>setShowPasswordModal(true)}
+                          className="bg-amber-50 text-amber-700 hover:bg-amber-100 border-2 border-amber-200 px-2 sm:px-3 py-1.5 sm:py-2 rounded-xl font-black text-[11px] sm:text-sm">
+                          <span className="hidden sm:inline">🔓 편집 모드</span>
+                          <span className="sm:hidden">🔓</span>
+                        </button>
+                      )}
+                    </div>
+                  )
                 )}
               </div>
             </div>
@@ -3195,23 +3262,43 @@
                       </button>
                     )}
                     {!showArchived&&!currentFolderId&&(
-                      <button onClick={()=>{
-                        if(!window.confirm('구글 시트의 기존 대회 데이터를 Firebase로 가져옵니다.\n이미 있는 대회는 덮어씁니다. 계속하시겠습니까?'))return;
-                        gasCall('getSheetTournaments')
-                          .then(async r=>{
-                            if(!r.success){alert('❌ '+r.error);return;}
-                            if(r.tournaments.length===0){alert('시트에 가져올 대회 데이터가 없습니다.');return;}
-                            let count=0;
-                            for(const t of r.tournaments){
-                              await fbSave(t.id,t).catch(()=>{});
-                              count++;
-                            }
-                            alert(`✅ ${count}개 대회를 Firebase로 가져왔습니다!`);
-                          })
-                          .catch(()=>alert('가져오기 실패. 다시 시도해주세요.'));
+                      <button onClick={async ()=>{
+                        const allTours = userTournaments;
+                        if(allTours.length===0){ alert('내보낼 대회가 없습니다.'); return; }
+                        if(!window.confirm(`총 ${allTours.length}개 대회를 시트로 내보냅니다.\n시간이 좀 걸릴 수 있습니다. 계속하시겠습니까?`))return;
+                        // 로딩 표시
+                        const btn = window.event?.currentTarget;
+                        const origText = btn?.innerHTML;
+                        if(btn) btn.innerHTML = '⏳ 내보내는 중...';
+                        try {
+                          const r = await gasCall('exportAllTournaments', {tournaments: allTours});
+                          if(!r.success){ alert('❌ '+r.error); return; }
+                          alert(`✅ 완료!\n성공: ${r.successCount}개\n실패: ${r.failCount}개\n총 ${r.total}개 처리`);
+                        } catch(e){
+                          alert('내보내기 실패. 다시 시도해주세요.');
+                        } finally {
+                          if(btn&&origText) btn.innerHTML = origText;
+                        }
                       }} className="bg-white border-2 border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-800 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl font-bold text-sm transition-all">
-                        <span className="hidden sm:inline">📥 시트 가져오기</span>
-                        <span className="sm:hidden">📥</span>
+                        <span className="hidden sm:inline">📤 전체 시트 내보내기</span>
+                        <span className="sm:hidden">📤</span>
+                      </button>
+                    )}
+                    {/* 🔗 시트 바로가기 — PC 전용 */}
+                    {!showArchived&&!currentFolderId&&(
+                      <button onClick={async ()=>{
+                        try {
+                          const r = await gasCall('getSheetUrl');
+                          if(r.success && r.url){
+                            window.open(r.url, '_blank');
+                          } else {
+                            alert('시트 URL을 가져올 수 없습니다.');
+                          }
+                        } catch(e){
+                          alert('시트 연결 실패. GAS 설정을 확인해주세요.');
+                        }
+                      }} className="hidden md:inline-flex bg-white border-2 border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-800 px-4 py-3 rounded-xl font-bold text-sm transition-all items-center">
+                        🔗 시트 바로가기
                       </button>
                     )}
                     {/* 메인 액션 — 강조 */}
@@ -3464,25 +3551,25 @@
                       )}
                     </div>
                   </div>
-                  {view!=='share'&&(
+                  {canEdit&&(
                     <div className="flex gap-2 w-full md:w-auto">
                       <button onClick={()=>{setStep(1);setView('setup');}} className="flex-1 md:flex-none bg-slate-100 text-slate-600 px-3 sm:px-4 py-2 rounded-xl font-black text-xs sm:text-sm hover:bg-slate-200">🛠️ <span className="hidden sm:inline">설정 수정</span><span className="sm:hidden">설정</span></button>
                       <button onClick={()=>{setStep(2);setView('setup');}} className="flex-1 md:flex-none bg-slate-100 text-slate-600 px-3 sm:px-4 py-2 rounded-xl font-black text-xs sm:text-sm hover:bg-slate-200">👥 <span className="hidden sm:inline">명단 수정</span><span className="sm:hidden">명단</span></button>
                     </div>
                   )}
                 </div>
-                {config.tournamentType===TType.LEAGUE&&<LeagueView participants={activeParticipants} rounds={generatedLeague} onMatchClick={m=>view!=='share'&&setSelectedLeagueMatch({match:m})} onScoreboardLink={view!=='share'?handleScoreboardLink:null} onAddRound={view!=='share'?(mode)=>handleAddRound(null,mode):null}/>}
-                {config.tournamentType===TType.TOURNAMENT&&<div className="bg-white p-10 rounded-[3rem] border border-slate-200 shadow-sm"><BracketView matches={generatedMatches} onMatchClick={m=>view!=='share'&&setSelectedMatch(m)} onScoreboardLink={view!=='share'?handleScoreboardLink:null}/></div>}
+                {config.tournamentType===TType.LEAGUE&&<LeagueView participants={activeParticipants} rounds={generatedLeague} onMatchClick={m=>canEdit&&setSelectedLeagueMatch({match:m})} onScoreboardLink={canEdit?handleScoreboardLink:null} onAddRound={canEdit?(mode)=>handleAddRound(null,mode):null}/>}
+                {config.tournamentType===TType.TOURNAMENT&&<div className="bg-white p-10 rounded-[3rem] border border-slate-200 shadow-sm"><BracketView matches={generatedMatches} onMatchClick={m=>canEdit&&setSelectedMatch(m)} onScoreboardLink={canEdit?handleScoreboardLink:null}/></div>}
                 {isGroupType&&(
                   <div className="space-y-16">
-                    <GroupStageView groups={generatedGroups} config={config} onMatchClick={(m,gid)=>view!=='share'&&setSelectedLeagueMatch({match:m,groupId:gid})} onScoreboardLink={view!=='share'?handleScoreboardLink:null} onAddRound={view!=='share'?(gid,mode)=>handleAddRound(gid,mode):null}/>
+                    <GroupStageView groups={generatedGroups} config={config} onMatchClick={(m,gid)=>canEdit&&setSelectedLeagueMatch({match:m,groupId:gid})} onScoreboardLink={canEdit?handleScoreboardLink:null} onAddRound={canEdit?(gid,mode)=>handleAddRound(gid,mode):null}/>
                     {config.tournamentType===TType.GROUP_KNOCKOUT&&(
                       <div className="bg-white p-10 rounded-[3rem] border border-slate-200 shadow-sm">
                         <div className="flex flex-col sm:flex-row justify-between items-center mb-10 gap-4 border-b border-slate-100 pb-6">
                           <h4 className="font-black text-slate-400 uppercase tracking-widest">Knockout Stage (본선)</h4>
-                          {view!=='share'&&<button onClick={handleRandomDraw} className="bg-amber-500 text-white px-6 py-2 rounded-xl font-black text-sm hover:bg-amber-600 shadow-md active:scale-95">🎲 본선 대진 추첨 (랜덤)</button>}
+                          {canEdit&&<button onClick={handleRandomDraw} className="bg-amber-500 text-white px-6 py-2 rounded-xl font-black text-sm hover:bg-amber-600 shadow-md active:scale-95">🎲 본선 대진 추첨 (랜덤)</button>}
                         </div>
-                        <BracketView matches={generatedMatches} onMatchClick={m=>view!=='share'&&setSelectedMatch(m)} onScoreboardLink={view!=='share'?handleScoreboardLink:null}/>
+                        <BracketView matches={generatedMatches} onMatchClick={m=>canEdit&&setSelectedMatch(m)} onScoreboardLink={canEdit?handleScoreboardLink:null}/>
                       </div>
                     )}
                   </div>
@@ -3548,6 +3635,23 @@
                         </div>
                       </div>
                     )}
+
+                    {/* 🔓 공유 페이지 편집 비밀번호 */}
+                    <div className="space-y-3 bg-amber-50/50 p-4 rounded-2xl border-2 border-amber-100">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <label className="text-[12px] font-black text-amber-700 uppercase tracking-widest">🔓 공유 편집 비밀번호 <span className="text-slate-400 normal-case font-bold">(선택)</span></label>
+                      </div>
+                      <input type="text" value={config.sharePassword||''}
+                        onChange={e=>setConfig({...config,sharePassword:e.target.value})}
+                        placeholder="비워두면 공유는 항상 읽기 전용"
+                        className="w-full p-3 bg-white border-2 border-slate-200 focus:border-amber-500 rounded-xl font-bold outline-none"/>
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        {config.sharePassword
+                          ? <span>✅ 공유 받은 사람이 이 비밀번호를 입력하면 <span className="font-black text-amber-700">점수 입력</span>이 가능해집니다.</span>
+                          : <span>💡 비밀번호 설정 시 운영진/심판이 공유 링크로 직접 점수 입력 가능합니다. (예: <code className="bg-slate-100 px-1 rounded">1234</code>)</span>
+                        }
+                      </p>
+                    </div>
 
                     {/* 🎾 테니스 전용 옵션 */}
                     {isTennis(config.sport)&&(
@@ -3715,6 +3819,18 @@
           {/* Modals */}
           {selectedMatch&&<MatchResultModal match={selectedMatch} config={config} onClose={()=>setSelectedMatch(null)} onSave={handleUpdateMatch}/>}
           {selectedLeagueMatch&&<LeagueMatchModal match={selectedLeagueMatch.match} config={config} onClose={()=>setSelectedLeagueMatch(null)} onSave={handleUpdateLeagueMatch}/>}
+
+          {/* 🔓 공유 페이지 — 비밀번호 입력 모달 */}
+          {showPasswordModal&&(
+            <PasswordPromptModal
+              correctPassword={config.sharePassword}
+              onSuccess={()=>{
+                setShareEditMode(true);
+                setShowPasswordModal(false);
+              }}
+              onClose={()=>setShowPasswordModal(false)}
+            />
+          )}
           {showAttendance&&<AttendanceModal participants={(()=>{
             // 출결 대상 = 활성 참가자 (조별이면 모든 조의 participants, 풀리그면 activeParticipants)
             const pool = [];
