@@ -2501,22 +2501,34 @@ function getSheetUrl() {
     const HelpView = ({ onBack }) => {
       const [gasUrl, setGasUrl] = useState(window.GAS_API_URL || '');
       const [sheetUrl, setSheetUrl] = useState(window.SHEET_URL || '');
-      const [savedMsg, setSavedMsg] = useState('');
+      const [sheetMsg, setSheetMsg] = useState('');
+      const [gasMsg, setGasMsg] = useState('');
       const [copyMsg, setCopyMsg] = useState('');
 
-      const saveSettings = () => {
-        // 검증
-        const gasOk = !gasUrl || gasUrl.includes('script.google.com/macros/');
-        const sheetOk = !sheetUrl || sheetUrl.includes('docs.google.com/spreadsheets/');
-        if(gasUrl && !gasOk){ alert('❌ GAS URL이 올바르지 않습니다.\nhttps://script.google.com/macros/s/.../exec 형식이어야 합니다.'); return; }
-        if(sheetUrl && !sheetOk){ alert('❌ 시트 URL이 올바르지 않습니다.\nhttps://docs.google.com/spreadsheets/d/.../edit 형식이어야 합니다.'); return; }
-
-        localStorage.setItem('matchmaker_gas_url', gasUrl);
+      // 시트 URL만 저장
+      const saveSheetUrl = () => {
+        if(!sheetUrl){ alert('시트 URL을 입력해주세요.'); return; }
+        if(!sheetUrl.includes('docs.google.com/spreadsheets/')){
+          alert('❌ 시트 URL이 올바르지 않습니다.\nhttps://docs.google.com/spreadsheets/d/.../edit 형식이어야 합니다.');
+          return;
+        }
         localStorage.setItem('matchmaker_sheet_url', sheetUrl);
-        window.GAS_API_URL = gasUrl;
         window.SHEET_URL = sheetUrl;
-        setSavedMsg('✅ 설정이 저장되었습니다!');
-        setTimeout(()=>setSavedMsg(''), 3000);
+        setSheetMsg('✅ 시트 URL이 저장되었습니다!');
+        setTimeout(()=>setSheetMsg(''), 3000);
+      };
+
+      // GAS URL만 저장
+      const saveGasUrl = () => {
+        if(!gasUrl){ alert('Apps Script URL을 입력해주세요.'); return; }
+        if(!gasUrl.includes('script.google.com/macros/')){
+          alert('❌ Apps Script URL이 올바르지 않습니다.\nhttps://script.google.com/macros/s/.../exec 형식이어야 합니다.');
+          return;
+        }
+        localStorage.setItem('matchmaker_gas_url', gasUrl);
+        window.GAS_API_URL = gasUrl;
+        setGasMsg('✅ Apps Script URL이 저장되었습니다!');
+        setTimeout(()=>setGasMsg(''), 3000);
       };
 
       const copyCode = async () => {
@@ -2558,45 +2570,31 @@ function getSheetUrl() {
             </p>
           </section>
 
-          {/* ⭐ 시트 연동 설정 (가장 중요한 영역) */}
-          <section className="bg-white p-6 rounded-2xl border-2 border-amber-200 shadow-sm">
-            <h3 className="text-lg font-black text-amber-700 mb-1">⚙️ 시트 연동 설정</h3>
-            <p className="text-xs text-slate-500 mb-4">아래 두 URL을 입력하면 시트 내보내기/바로가기 기능이 활성화됩니다.</p>
-
-            <div className="space-y-4">
-              <div>
-                <label className="text-[12px] font-black text-slate-500 uppercase tracking-widest">📊 구글 시트 URL <span className="text-amber-600 normal-case">(시트 바로가기 버튼용)</span></label>
-                <input type="text" value={sheetUrl} onChange={e=>setSheetUrl(e.target.value)}
-                  placeholder="https://docs.google.com/spreadsheets/d/.../edit"
-                  className="w-full mt-2 p-3 bg-slate-50 border-2 border-slate-200 focus:border-amber-500 rounded-xl font-bold text-sm outline-none"/>
-              </div>
-              <div>
-                <label className="text-[12px] font-black text-slate-500 uppercase tracking-widest">🔧 Apps Script 배포 URL <span className="text-amber-600 normal-case">(시트 내보내기용)</span></label>
-                <input type="text" value={gasUrl} onChange={e=>setGasUrl(e.target.value)}
-                  placeholder="https://script.google.com/macros/s/.../exec"
-                  className="w-full mt-2 p-3 bg-slate-50 border-2 border-slate-200 focus:border-amber-500 rounded-xl font-bold text-sm outline-none"/>
-              </div>
-
-              <button onClick={saveSettings}
-                className="w-full bg-amber-500 hover:bg-amber-600 text-white py-3 rounded-xl font-black shadow-md">
-                💾 설정 저장
-              </button>
-              {savedMsg && <p className="text-center text-sm font-black text-green-600">{savedMsg}</p>}
-            </div>
-          </section>
-
-          {/* 1단계: 시트 만들기 */}
-          <section className="bg-white p-6 rounded-2xl border border-slate-200">
+          {/* 1단계: 시트 만들기 + URL 입력 */}
+          <section className="bg-white p-6 rounded-2xl border-2 border-blue-100 shadow-sm">
             <h3 className="text-lg font-black text-slate-800 mb-3">
               <span className="inline-block bg-blue-500 text-white w-7 h-7 rounded-lg text-center mr-2 text-sm leading-7">1</span>
               구글 스프레드시트 만들기
             </h3>
-            <ol className="space-y-2 text-sm text-slate-700 leading-relaxed ml-2">
+            <ol className="space-y-2 text-sm text-slate-700 leading-relaxed ml-2 mb-4">
               <li><a href="https://sheets.new" target="_blank" rel="noopener noreferrer" className="text-blue-600 font-black hover:underline">→ sheets.new</a> 접속 (새 시트가 즉시 생성됨)</li>
               <li>또는 구글 드라이브 → 새로 만들기 → 구글 스프레드시트</li>
               <li>시트 이름을 원하는 대로 변경 (예: <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs">매치메이커 대회 기록</code>)</li>
-              <li>주소창의 URL을 복사 → 위쪽 <strong>"구글 시트 URL"</strong> 칸에 붙여넣기</li>
+              <li>주소창의 URL을 복사 → 아래 칸에 붙여넣기 ↓</li>
             </ol>
+
+            {/* 시트 URL 입력 */}
+            <div className="bg-blue-50 p-4 rounded-xl border border-blue-200 space-y-3">
+              <label className="text-[12px] font-black text-blue-700 uppercase tracking-widest">📊 구글 시트 URL <span className="text-slate-500 normal-case">(시트 바로가기 버튼용)</span></label>
+              <input type="text" value={sheetUrl} onChange={e=>setSheetUrl(e.target.value)}
+                placeholder="https://docs.google.com/spreadsheets/d/.../edit"
+                className="w-full p-3 bg-white border-2 border-slate-200 focus:border-blue-500 rounded-xl font-bold text-sm outline-none"/>
+              <button onClick={saveSheetUrl}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-black shadow-md">
+                💾 시트 URL 저장
+              </button>
+              {sheetMsg && <p className="text-center text-sm font-black text-green-600">{sheetMsg}</p>}
+            </div>
           </section>
 
           {/* 2단계: Apps Script 열기 */}
@@ -2606,17 +2604,17 @@ function getSheetUrl() {
               Apps Script 열기
             </h3>
             <ol className="space-y-2 text-sm text-slate-700 leading-relaxed ml-2">
-              <li>스프레드시트 메뉴에서 <strong>확장 프로그램 → Apps Script</strong> 클릭</li>
+              <li>방금 만든 스프레드시트 메뉴에서 <strong>확장 프로그램 → Apps Script</strong> 클릭</li>
               <li>새 탭에 코드 편집기가 열립니다</li>
               <li>기본으로 있는 <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs">function myFunction() &#123;&#125;</code> 코드는 모두 삭제 (Ctrl+A → Delete)</li>
             </ol>
           </section>
 
-          {/* 3단계: 코드 복사 */}
+          {/* 3단계: 코드 복사 & Apps Script에 붙여넣기 */}
           <section className="bg-white p-6 rounded-2xl border border-slate-200">
             <h3 className="text-lg font-black text-slate-800 mb-3">
               <span className="inline-block bg-blue-500 text-white w-7 h-7 rounded-lg text-center mr-2 text-sm leading-7">3</span>
-              Code.gs 코드 복사 & 붙여넣기
+              Code.gs 코드 복사 → Apps Script에 붙여넣기
             </h3>
             <p className="text-sm text-slate-600 mb-3">아래 버튼을 누르면 매치메이커 전용 코드가 클립보드에 복사됩니다.</p>
             <button onClick={copyCode}
@@ -2626,10 +2624,11 @@ function getSheetUrl() {
             {copyMsg && <p className="mt-3 text-center text-sm font-black text-green-600">{copyMsg}</p>}
             <div className="mt-3 p-3 bg-blue-50 border border-blue-100 rounded-xl">
               <p className="text-xs text-blue-800 leading-relaxed">
-                💡 <strong>주의</strong>: 위 버튼은 핵심 구조만 복사합니다. 전체 코드(약 350줄)는 GitHub 저장소에 있습니다:<br/>
+                💡 <strong>완전한 코드는 GitHub에 있습니다</strong>: <br/>
                 <a href="https://github.com/today119/matchmaker-pro/blob/main/Code.gs" target="_blank" rel="noopener noreferrer" className="text-blue-600 font-black hover:underline break-all">
                   github.com/today119/matchmaker-pro/blob/main/Code.gs
-                </a>
+                </a><br/>
+                → <strong>[Raw]</strong> 버튼 클릭 → Ctrl+A → Ctrl+C로 전체 복사
               </p>
             </div>
             <ol className="mt-4 space-y-2 text-sm text-slate-700 leading-relaxed ml-2">
@@ -2639,13 +2638,13 @@ function getSheetUrl() {
             </ol>
           </section>
 
-          {/* 4단계: 배포 */}
-          <section className="bg-white p-6 rounded-2xl border border-slate-200">
+          {/* 4단계: 배포 + URL 입력 */}
+          <section className="bg-white p-6 rounded-2xl border-2 border-amber-100 shadow-sm">
             <h3 className="text-lg font-black text-slate-800 mb-3">
               <span className="inline-block bg-blue-500 text-white w-7 h-7 rounded-lg text-center mr-2 text-sm leading-7">4</span>
               웹앱으로 배포하기 (가장 중요)
             </h3>
-            <ol className="space-y-2 text-sm text-slate-700 leading-relaxed ml-2">
+            <ol className="space-y-2 text-sm text-slate-700 leading-relaxed ml-2 mb-4">
               <li>Apps Script 편집기 우측 상단 <strong>[배포]</strong> 버튼 클릭</li>
               <li><strong>[새 배포]</strong> 선택</li>
               <li>⚙️ 톱니바퀴 → <strong>웹 앱</strong> 선택</li>
@@ -2658,17 +2657,28 @@ function getSheetUrl() {
               </li>
               <li><strong>[배포]</strong> 클릭</li>
               <li>처음에는 권한 요청 → <strong>액세스 승인</strong> → 본인 계정 → <strong>고급 → 안전하지 않은 페이지로 이동 → 허용</strong></li>
-              <li>배포 완료 후 <strong>웹 앱 URL</strong>이 표시됩니다 (예: <code className="text-xs bg-slate-100 px-1 rounded">https://script.google.com/macros/s/AKfy.../exec</code>)</li>
-              <li>이 URL을 복사 → 위쪽 <strong>"Apps Script 배포 URL"</strong> 칸에 붙여넣기</li>
-              <li>설정 저장 → 완료! 🎉</li>
+              <li>배포 완료 후 <strong>웹 앱 URL</strong>이 표시됩니다 → 복사 → 아래 칸에 붙여넣기 ↓</li>
             </ol>
+
+            {/* GAS URL 입력 */}
+            <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 space-y-3">
+              <label className="text-[12px] font-black text-amber-700 uppercase tracking-widest">🔧 Apps Script 배포 URL <span className="text-slate-500 normal-case">(시트 내보내기용)</span></label>
+              <input type="text" value={gasUrl} onChange={e=>setGasUrl(e.target.value)}
+                placeholder="https://script.google.com/macros/s/.../exec"
+                className="w-full p-3 bg-white border-2 border-slate-200 focus:border-amber-500 rounded-xl font-bold text-sm outline-none"/>
+              <button onClick={saveGasUrl}
+                className="w-full bg-amber-500 hover:bg-amber-600 text-white py-3 rounded-xl font-black shadow-md">
+                💾 Apps Script URL 저장
+              </button>
+              {gasMsg && <p className="text-center text-sm font-black text-green-600">{gasMsg}</p>}
+            </div>
           </section>
 
           {/* 5단계: 테스트 */}
-          <section className="bg-white p-6 rounded-2xl border border-slate-200">
+          <section className="bg-green-50 p-6 rounded-2xl border-2 border-green-200">
             <h3 className="text-lg font-black text-slate-800 mb-3">
               <span className="inline-block bg-green-500 text-white w-7 h-7 rounded-lg text-center mr-2 text-sm leading-7">✓</span>
-              연동 테스트
+              연동 테스트 — 모든 설정 끝!
             </h3>
             <ol className="space-y-2 text-sm text-slate-700 leading-relaxed ml-2">
               <li>대시보드로 돌아가서 <strong>🔗 시트 바로가기</strong> 클릭 → 시트가 새 탭에 열리면 ✅</li>
