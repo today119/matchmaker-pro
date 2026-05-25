@@ -1,0 +1,42 @@
+{
+  "name": "MatchMaker Pro — 매치메이커 프로",
+  "short_name": "MatchMaker Pro",
+  "description": "스포츠 대회·수행평가·리그 운영을 위한 토너먼트 관리 도구 (Pro 버전)",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1e1b4b",
+  "theme_color": "#4c1d95",
+  "lang": "ko",
+  "categories": ["sports", "education", "productivity"],
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "새 대회 만들기",
+      "short_name": "새 대회",
+      "description": "새 대회 생성 화면으로 바로 이동",
+      "url": "./?action=new"
+    }
+  ]
+}

@@ -3230,28 +3230,98 @@
                   {!showArchived&&!currentFolderId&&folderList.map(f=>{
                     const cm = FOLDER_COLOR_MAP[f.color] || FOLDER_COLOR_MAP.blue;
                     const folderTours = activeTours.filter(t=>t.folderId===f.id);
-                    const previewIcons = folderTours.slice(0,4).map(t=>SPORTS_LIST.find(s=>s.id===t.config?.sport)?.icon||'🏆');
+
+                    // 진행 상태 계산 헬퍼
+                    const getStatusInfo = (t) => {
+                      if(t.isCompleted) return {label:'완료', cls:'bg-green-100 text-green-700'};
+                      // 모든 매치 확인
+                      let total=0, done=0;
+                      if(t.generatedGroups){
+                        (t.generatedGroups||[]).forEach(g=>{
+                          (g.rounds||[]).forEach(r=>{
+                            (r.matches||[]).forEach(m=>{
+                              if(m.home?.id?.startsWith('bye')||m.away?.id?.startsWith('bye'))return;
+                              total++;
+                              if(m.status==='completed')done++;
+                            });
+                          });
+                        });
+                      }
+                      if(t.generatedMatches){
+                        (t.generatedMatches||[]).forEach(m=>{
+                          if(!m.participant1||!m.participant2)return;
+                          total++;
+                          if(m.status==='completed')done++;
+                        });
+                      }
+                      if(t.generatedRounds){
+                        (t.generatedRounds||[]).forEach(r=>{
+                          (r.matches||[]).forEach(m=>{
+                            if(m.home?.id?.startsWith('bye')||m.away?.id?.startsWith('bye'))return;
+                            total++;
+                            if(m.status==='completed')done++;
+                          });
+                        });
+                      }
+                      if(total===0)return {label:'준비중', cls:'bg-slate-100 text-slate-500'};
+                      if(done===0)return {label:'시작 전', cls:'bg-slate-100 text-slate-600'};
+                      if(done===total)return {label:'완료', cls:'bg-green-100 text-green-700'};
+                      const pct = Math.round(done/total*100);
+                      return {label:`${pct}%`, cls:'bg-blue-100 text-blue-700'};
+                    };
+
+                    const showCount = 3; // 미리보기에 보일 미니 카드 개수
+                    const visibleTours = folderTours.slice(0, showCount);
+                    const moreCount = Math.max(0, folderTours.length - showCount);
+
                     return (
                       <div key={f.id} onClick={()=>setCurrentFolderId(f.id)}
-                        className={`rounded-2xl sm:rounded-[2.5rem] border-2 ${cm.border} ${cm.bg} p-4 sm:p-6 hover:shadow-xl ${cm.hover} transition-all flex flex-col cursor-pointer active:scale-95 relative group`}>
-                        <div className="flex justify-between items-start gap-2 mb-2">
-                          <span className="text-3xl sm:text-4xl">{f.icon||'📁'}</span>
+                        className={`rounded-2xl sm:rounded-[2.5rem] border-2 ${cm.border} ${cm.bg} p-4 sm:p-5 hover:shadow-xl ${cm.hover} transition-all flex flex-col cursor-pointer active:scale-[0.98] relative group`}>
+                        {/* 헤더 */}
+                        <div className="flex justify-between items-start gap-2 mb-3">
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            <span className="text-2xl sm:text-3xl shrink-0">{f.icon||'📁'}</span>
+                            <div className="min-w-0">
+                              <h3 className={`text-base sm:text-lg font-black ${cm.text} truncate`}>{f.name}</h3>
+                              <p className="text-[10px] sm:text-[11px] font-black text-slate-500 uppercase">{folderTours.length}개 대회</p>
+                            </div>
+                          </div>
                           <button onClick={(e)=>{e.stopPropagation();setEditingFolder(f);}}
-                            className={`opacity-0 group-hover:opacity-100 w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center bg-white/80 text-slate-500 hover:bg-white transition-all`}
+                            className="opacity-0 group-hover:opacity-100 w-8 h-8 rounded-xl flex items-center justify-center bg-white/80 text-slate-500 hover:bg-white transition-all shrink-0"
                             title="폴더 편집">
                             <span className="text-base">✏️</span>
                           </button>
                         </div>
-                        {/* 미니 아이콘 미리보기 (2x2 그리드) */}
-                        <div className="bg-white/60 rounded-xl sm:rounded-2xl p-2 sm:p-3 my-2 sm:my-3 grid grid-cols-2 gap-1 sm:gap-2 aspect-square max-h-[120px] sm:max-h-[140px]">
-                          {[0,1,2,3].map(i=>(
-                            <div key={i} className="bg-white/80 rounded-md sm:rounded-lg flex items-center justify-center text-base sm:text-2xl">
-                              {previewIcons[i] || ''}
+
+                        {/* 미니 카드 스택 */}
+                        <div className="space-y-1.5 sm:space-y-2">
+                          {visibleTours.length===0 ? (
+                            <div className="bg-white/50 rounded-xl p-4 sm:p-6 text-center text-slate-400 text-xs sm:text-sm font-bold">
+                              아직 대회가 없습니다
                             </div>
-                          ))}
+                          ) : (
+                            visibleTours.map(t=>{
+                              const status = getStatusInfo(t);
+                              const icon = SPORTS_LIST.find(s=>s.id===t.config?.sport)?.icon||'🏆';
+                              return (
+                                <div key={t.id} className="bg-white/80 hover:bg-white rounded-xl p-2 sm:p-2.5 flex items-center gap-2 sm:gap-3 transition-all">
+                                  <span className="text-lg sm:text-xl shrink-0">{icon}</span>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-xs sm:text-sm font-black text-slate-800 truncate">{t.config?.name||'무제'}</p>
+                                  </div>
+                                  <span className={`text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-0.5 rounded-full uppercase tracking-wide shrink-0 ${status.cls}`}>
+                                    {status.label}
+                                  </span>
+                                </div>
+                              );
+                            })
+                          )}
+                          {moreCount>0 && (
+                            <div className="text-center text-[11px] sm:text-xs font-black text-slate-500 pt-1">
+                              + {moreCount}개 더 보기
+                            </div>
+                          )}
                         </div>
-                        <h3 className={`text-base sm:text-lg font-black ${cm.text} mt-1 truncate`}>{f.name}</h3>
-                        <p className="text-[11px] sm:text-[12px] font-black text-slate-500 uppercase mt-0.5">{folderTours.length}개 대회</p>
                       </div>
                     );
                   })}
