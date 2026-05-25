@@ -3179,14 +3179,18 @@
                       </>
                     )}
                   </div>
-                  <div className="flex gap-2 sm:gap-3 flex-wrap items-center">
+                  <div className="flex gap-2 flex-wrap items-center">
+                    {/* 보조 액션들 — 회색 톤으로 통일 */}
                     {!showArchived&&!currentFolderId&&(
-                      <button onClick={()=>setEditingFolder({})} className="bg-purple-50 text-purple-600 border-2 border-purple-200 hover:border-purple-400 px-3 sm:px-5 py-2.5 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-base">
-                        + 새 폴더
+                      <button onClick={()=>setEditingFolder({})}
+                        className="bg-white border-2 border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-800 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl font-bold text-sm transition-all">
+                        <span className="hidden sm:inline">📁 새 폴더</span>
+                        <span className="sm:hidden">📁</span>
                       </button>
                     )}
                     {currentFolder&&(
-                      <button onClick={()=>setEditingFolder(currentFolder)} className="bg-slate-100 text-slate-600 hover:bg-slate-200 px-3 sm:px-5 py-2.5 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-base">
+                      <button onClick={()=>setEditingFolder(currentFolder)}
+                        className="bg-white border-2 border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-800 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl font-bold text-sm transition-all">
                         ✏️ 폴더 편집
                       </button>
                     )}
@@ -3205,11 +3209,18 @@
                             alert(`✅ ${count}개 대회를 Firebase로 가져왔습니다!`);
                           })
                           .catch(()=>alert('가져오기 실패. 다시 시도해주세요.'));
-                      }} className="text-xs sm:text-sm font-black text-amber-700 bg-amber-50 border border-amber-200 px-3 sm:px-4 py-2 rounded-xl hover:bg-amber-100">
-                        📥 <span className="hidden sm:inline">시트 가져오기</span><span className="sm:hidden">시트</span>
+                      }} className="bg-white border-2 border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-800 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl font-bold text-sm transition-all">
+                        <span className="hidden sm:inline">📥 시트 가져오기</span>
+                        <span className="sm:hidden">📥</span>
                       </button>
                     )}
-                    {!showArchived&&<button onClick={startNew} className="bg-blue-600 text-white px-4 sm:px-8 py-2.5 sm:py-4 rounded-xl sm:rounded-2xl font-black text-sm sm:text-lg hover:bg-blue-700 shadow-xl shadow-blue-100">+ 새 대회</button>}
+                    {/* 메인 액션 — 강조 */}
+                    {!showArchived&&(
+                      <button onClick={startNew}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-5 sm:px-7 py-2.5 sm:py-3 rounded-xl font-black text-sm sm:text-base shadow-lg shadow-blue-200 transition-all active:scale-95">
+                        + 새 대회
+                      </button>
+                    )}
                   </div>
                 </div>
 
