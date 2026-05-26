@@ -124,6 +124,17 @@
     window.__fbWarned = false;
     const fbSave = async (id, record) => {
       const clean = sanitizeForFirebase(record);
+      // ⭐ 안전장치: Firebase에 이미 folderId가 있으면 새 record에도 유지
+      if (clean.folderId === undefined || clean.folderId === null) {
+        try {
+          const snap = await db.ref('tournaments/'+id+'/folderId').once('value');
+          const existingFolderId = snap.val();
+          if (existingFolderId) {
+            clean.folderId = existingFolderId;
+            console.log('[fbSave] folderId 복구:', id, '→', existingFolderId);
+          }
+        } catch(e) { /* 무시 */ }
+      }
       lsSave(id, clean); // 즉시 localStorage에 저장
       try {
         await db.ref('tournaments/'+id).set(clean);
