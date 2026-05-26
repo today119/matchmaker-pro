@@ -2937,13 +2937,17 @@ function getSheetUrl() {
       },[]);
 
       // ── 자동 저장 (디바운스 300ms — Firebase는 빠름) ──────
-      const buildRecord = useCallback(()=>({
-        id: currentId,
-        createdAt: userTournaments.find(t=>t.id===currentId)?.createdAt||Date.now(),
-        isCompleted: checkIsCompleted(),
-        isArchived: userTournaments.find(t=>t.id===currentId)?.isArchived||false,
-        config, participants, activeParticipants, generatedMatches, generatedLeague, generatedGroups
-      }),[currentId,userTournaments,config,participants,activeParticipants,generatedMatches,generatedLeague,generatedGroups]);
+      const buildRecord = useCallback(()=>{
+        const existing = userTournaments.find(t=>t.id===currentId);
+        return {
+          id: currentId,
+          createdAt: existing?.createdAt || Date.now(),
+          isCompleted: checkIsCompleted(),
+          isArchived: existing?.isArchived || false,
+          folderId: existing?.folderId || null,  // ⭐ 폴더 정보 유지
+          config, participants, activeParticipants, generatedMatches, generatedLeague, generatedGroups
+        };
+      },[currentId,userTournaments,config,participants,activeParticipants,generatedMatches,generatedLeague,generatedGroups]);
 
       const checkIsCompleted=()=>{
         if(config.tournamentType===TType.TOURNAMENT||config.tournamentType===TType.GROUP_KNOCKOUT){
