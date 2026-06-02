@@ -414,10 +414,26 @@
     const TEAM_FORMATS = [
       { id: '2D1S', name: '2복식 1단식',  matches: 3 },
       { id: '3D',   name: '3복식',        matches: 3 },
+      { id: '4D',   name: '4복식',        matches: 4 },
       { id: '3S2D', name: '3단식 2복식',  matches: 5 },
       { id: '1S2D', name: '1단식 2복식',  matches: 3 },
       { id: '2S1D', name: '2단식 1복식',  matches: 3 },
     ];
+
+    // 각 매치 슬롯의 라벨 (1복, 2복, 1단 등) 반환
+    const getMatchSlotLabel = (formatId, matchIndex) => {
+      // matchIndex는 0-based
+      const labels = {
+        '2D1S': ['1복', '2복', '1단'],
+        '3D':   ['1복', '2복', '3복'],
+        '4D':   ['1복', '2복', '3복', '4복'],
+        '3S2D': ['1단', '2단', '3단', '1복', '2복'],
+        '1S2D': ['1단', '1복', '2복'],
+        '2S1D': ['1단', '2단', '1복'],
+      };
+      return labels[formatId]?.[matchIndex] || `M${matchIndex+1}`;
+    };
+
     const MAX_PARTICIPANTS = 64;
     const TType = { TOURNAMENT:'TOURNAMENT', LEAGUE:'LEAGUE', GROUP_KNOCKOUT:'GROUP_KNOCKOUT', GROUP_LEAGUE:'GROUP_LEAGUE' };
 
@@ -1131,7 +1147,7 @@
                       {nr>1&&<p className="text-[11px] sm:text-[12px] font-black text-slate-400 uppercase">Round {ri+1}</p>}
                       {round.map((m,mi)=>(
                         <div key={mi} className="flex items-center gap-2 sm:gap-4 bg-white p-2 sm:p-3 rounded-xl border border-slate-100 shadow-sm">
-                          <span className="text-[10px] sm:text-[12px] font-bold text-slate-400 w-10 sm:w-12 shrink-0">M{mi+1}</span>
+                          <span className="text-[10px] sm:text-[12px] font-black text-blue-600 w-10 sm:w-12 shrink-0 text-center">{getMatchSlotLabel(config.teamFormat, mi)}</span>
                           <div className="flex-1 flex items-center justify-between gap-1 sm:gap-2">
                             <span className="text-xs sm:text-sm font-bold text-slate-600 truncate flex-1 min-w-0">{match.participant1?.name}</span>
                             <input type="number" value={m.s1} onChange={e=>{const ns=[...sub];ns[ri][mi].s1=parseInt(e.target.value)||0;setSub(ns);}} className="w-10 sm:w-12 text-center font-black border rounded p-1 text-sm sm:text-base shrink-0"/>
@@ -1310,7 +1326,7 @@
                       {nr>1&&<p className="text-[11px] sm:text-[12px] font-black text-slate-400 uppercase">Round {ri+1}</p>}
                       {round.map((m,mi)=>(
                         <div key={mi} className="flex items-center gap-2 sm:gap-4 bg-white p-2 sm:p-3 rounded-xl border border-slate-100 shadow-sm">
-                          <span className="text-[10px] sm:text-[12px] font-bold text-slate-400 w-10 sm:w-12 shrink-0">M{mi+1}</span>
+                          <span className="text-[10px] sm:text-[12px] font-black text-blue-600 w-10 sm:w-12 shrink-0 text-center">{getMatchSlotLabel(config.teamFormat, mi)}</span>
                           <div className="flex-1 flex items-center justify-between gap-1 sm:gap-2">
                             <span className="text-xs sm:text-sm font-bold text-slate-600 truncate flex-1 min-w-0">{match.home.name}</span>
                             <input type="number" inputMode="numeric" value={m.s1} onFocus={e=>e.target.select()} onChange={e=>{const ns=[...sub];ns[ri][mi].s1=e.target.value;setSub(ns);}} className="w-10 sm:w-12 text-center font-black border rounded p-1 text-sm sm:text-base shrink-0"/>
