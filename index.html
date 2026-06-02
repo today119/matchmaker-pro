@@ -1243,10 +1243,34 @@
       const isSets = isSetsGame(config.sport);
       const totalSets = config.sets || 3;
       const winSets = Math.ceil(totalSets / 2);
+
+      // 팀 선수 목록 (단체전인 경우)
+      const homeMembers = isTeam ? (match.home?.members || match.home?.participants || []) : [];
+      const awayMembers = isTeam ? (match.away?.members || match.away?.participants || []) : [];
+
+      // 각 슬롯이 복식인지 단식인지 판별
+      const isDoublesSlot = (slotIdx) => {
+        const label = getMatchSlotLabel(config.teamFormat, slotIdx);
+        return label.includes('복');
+      };
+
       // 문자열로 보관 → 사용자가 0을 지우고 새로 입력 가능
       const [s1,setS1]=useState(String(match.scoreHome??0));
       const [s2,setS2]=useState(String(match.scoreAway??0));
-      const [sub,setSub]=useState(Array.from({length:nr},()=>Array.from({length:nm},()=>({s1:'0',s2:'0'}))));
+      // sub: 점수 + 라인업(선수ID 배열)
+      const initSub = () => {
+        // 기존 lineup 데이터 복원
+        const existingLineup = match.lineup || null;
+        return Array.from({length:nr},(_,ri)=>Array.from({length:nm},(_,mi)=>{
+          const ex = existingLineup?.[ri]?.[mi];
+          return {
+            s1: '0', s2: '0',
+            homePlayers: ex?.homePlayers || [],  // [playerId, playerId]
+            awayPlayers: ex?.awayPlayers || []
+          };
+        }));
+      };
+      const [sub,setSub]=useState(initSub());
       // 세트별 점수 — 세트제 종목용
       const initSets = () => {
         if(match.setScores && match.setScores.length>0){
@@ -1285,15 +1309,21 @@
         setS1(String(w1));setS2(String(w2));
       };
       const handleSave=()=>{
+        // 단체전이면 lineup 정보를 sub에서 추출
+        const lineupData = isTeam ? sub.map(round => round.map(slot => ({
+          homePlayers: slot.homePlayers || [],
+          awayPlayers: slot.awayPlayers || []
+        }))) : null;
+
         if(isSets){
           const {wh, wa, valid} = computedFromSets();
           if(valid.length===0){alert('최소 한 세트 이상의 점수를 입력하세요.');return;}
           if(wh<winSets && wa<winSets){
             if(!window.confirm(`아직 경기가 종료되지 않았습니다.\n현재 ${wh}:${wa} (${winSets}세트 선승)\n그래도 저장하시겠습니까?`))return;
           }
-          onSave(match.id, wh, wa, valid);
+          onSave(match.id, wh, wa, valid, lineupData);
         } else {
-          onSave(match.id, parseInt(s1)||0, parseInt(s2)||0, null);
+          onSave(match.id, parseInt(s1)||0, parseInt(s2)||0, null, lineupData);
         }
       };
       const updateSetRow = (idx, side, val) => {
@@ -1318,24 +1348,116 @@
               {isTeam&&(
                 <div className="space-y-4 sm:space-y-6 bg-slate-50 p-3 sm:p-6 rounded-xl sm:rounded-2xl border border-slate-100">
                   <div className="flex justify-between items-center">
-                    <h4 className="font-black text-slate-900 text-sm sm:text-base italic">Detailed Match Results</h4>
+                    <h4 className="font-black text-slate-900 text-sm sm:text-base italic">Match Lineup & Score</h4>
                     <button onClick={applyTeam} className="text-[11px] sm:text-[12px] font-black bg-blue-600 text-white px-2 sm:px-3 py-1 rounded-full hover:bg-blue-700">결과 자동 반영</button>
                   </div>
                   {sub.map((round,ri)=>(
-                    <div key={ri} className="space-y-2 sm:space-y-3">
+                    <div key={ri} className="space-y-3 sm:space-y-4">
                       {nr>1&&<p className="text-[11px] sm:text-[12px] font-black text-slate-400 uppercase">Round {ri+1}</p>}
-                      {round.map((m,mi)=>(
-                        <div key={mi} className="flex items-center gap-2 sm:gap-4 bg-white p-2 sm:p-3 rounded-xl border border-slate-100 shadow-sm">
-                          <span className="text-[10px] sm:text-[12px] font-black text-blue-600 w-10 sm:w-12 shrink-0 text-center">{getMatchSlotLabel(config.teamFormat, mi)}</span>
-                          <div className="flex-1 flex items-center justify-between gap-1 sm:gap-2">
-                            <span className="text-xs sm:text-sm font-bold text-slate-600 truncate flex-1 min-w-0">{match.home.name}</span>
-                            <input type="number" inputMode="numeric" value={m.s1} onFocus={e=>e.target.select()} onChange={e=>{const ns=[...sub];ns[ri][mi].s1=e.target.value;setSub(ns);}} className="w-10 sm:w-12 text-center font-black border rounded p-1 text-sm sm:text-base shrink-0"/>
-                            <span className="text-[10px] sm:text-[12px] font-black text-slate-300 italic shrink-0">VS</span>
-                            <input type="number" inputMode="numeric" value={m.s2} onFocus={e=>e.target.select()} onChange={e=>{const ns=[...sub];ns[ri][mi].s2=e.target.value;setSub(ns);}} className="w-10 sm:w-12 text-center font-black border rounded p-1 text-sm sm:text-base shrink-0"/>
-                            <span className="text-xs sm:text-sm font-bold text-slate-600 truncate flex-1 min-w-0 text-right">{match.away.name}</span>
+                      {round.map((m,mi)=>{
+                        const isDbl = isDoublesSlot(mi);
+                        const neededPlayers = isDbl ? 2 : 1;
+                        const homeSelected = m.homePlayers || [];
+                        const awaySelected = m.awayPlayers || [];
+                        // 같은 라운드 내 다른 슬롯에서 이미 선택된 선수들 (중복 표시용 — 허용은 됨)
+                        const homeUsedElsewhere = round.flatMap((other, oi) => oi===mi ? [] : (other.homePlayers||[]));
+                        const awayUsedElsewhere = round.flatMap((other, oi) => oi===mi ? [] : (other.awayPlayers||[]));
+                        const togglePlayer = (side, playerId) => {
+                          setSub(prev=>{
+                            const next = prev.map(r=>r.map(s=>({...s})));
+                            const slot = next[ri][mi];
+                            const key = side==='home' ? 'homePlayers' : 'awayPlayers';
+                            const current = [...(slot[key]||[])];
+                            const idx = current.indexOf(playerId);
+                            if(idx>=0){
+                              current.splice(idx,1);
+                            } else {
+                              if(current.length>=neededPlayers){
+                                current.shift(); // 가장 오래된 거 빼고 새로 추가
+                              }
+                              current.push(playerId);
+                            }
+                            slot[key] = current;
+                            return next;
+                          });
+                        };
+                        const homePlayerNames = homeSelected.map(pid=>homeMembers.find(p=>p.id===pid)?.name).filter(Boolean).join(' / ');
+                        const awayPlayerNames = awaySelected.map(pid=>awayMembers.find(p=>p.id===pid)?.name).filter(Boolean).join(' / ');
+                        return (
+                          <div key={mi} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                            {/* 슬롯 헤더 */}
+                            <div className="bg-blue-50 px-3 py-2 flex items-center justify-between">
+                              <span className="text-xs sm:text-sm font-black text-blue-700">{getMatchSlotLabel(config.teamFormat, mi)}</span>
+                              <span className="text-[10px] sm:text-[11px] font-bold text-slate-500">{isDbl?'복식 (2명)':'단식 (1명)'}</span>
+                            </div>
+
+                            {/* 선수 선택 (홈/원정 멤버 있을 때만) */}
+                            {homeMembers.length>0 && awayMembers.length>0 && (
+                              <div className="p-2 sm:p-3 grid grid-cols-2 gap-2 sm:gap-3 border-b border-slate-100">
+                                {/* 홈팀 선수 선택 */}
+                                <div>
+                                  <p className="text-[9px] sm:text-[10px] font-black text-blue-600 uppercase mb-1.5 truncate">{match.home.name}</p>
+                                  <div className="flex flex-wrap gap-1">
+                                    {homeMembers.map(p=>{
+                                      const sel = homeSelected.includes(p.id);
+                                      const usedElse = homeUsedElsewhere.includes(p.id);
+                                      return (
+                                        <button key={p.id} onClick={()=>togglePlayer('home', p.id)}
+                                          title={usedElse&&!sel?'다른 슬롯에 출전 (중복 출전 가능)':''}
+                                          className={`text-[10px] sm:text-[11px] font-bold px-1.5 py-1 rounded-md transition-all ${
+                                            sel ? 'bg-blue-600 text-white' :
+                                            usedElse ? 'bg-amber-50 text-amber-600 border border-amber-200 hover:bg-amber-100' :
+                                            'bg-slate-100 text-slate-600 hover:bg-blue-100'
+                                          }`}>
+                                          {p.name}{usedElse&&!sel?' ↺':''}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                                {/* 원정팀 선수 선택 */}
+                                <div>
+                                  <p className="text-[9px] sm:text-[10px] font-black text-rose-600 uppercase mb-1.5 truncate">{match.away.name}</p>
+                                  <div className="flex flex-wrap gap-1">
+                                    {awayMembers.map(p=>{
+                                      const sel = awaySelected.includes(p.id);
+                                      const usedElse = awayUsedElsewhere.includes(p.id);
+                                      return (
+                                        <button key={p.id} onClick={()=>togglePlayer('away', p.id)}
+                                          title={usedElse&&!sel?'다른 슬롯에 출전 (중복 출전 가능)':''}
+                                          className={`text-[10px] sm:text-[11px] font-bold px-1.5 py-1 rounded-md transition-all ${
+                                            sel ? 'bg-rose-600 text-white' :
+                                            usedElse ? 'bg-amber-50 text-amber-600 border border-amber-200 hover:bg-amber-100' :
+                                            'bg-slate-100 text-slate-600 hover:bg-rose-100'
+                                          }`}>
+                                          {p.name}{usedElse&&!sel?' ↺':''}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* 점수 입력 (선수 표시 포함) */}
+                            <div className="p-2 sm:p-3 flex items-center gap-2 sm:gap-3">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[10px] sm:text-xs font-bold text-slate-700 truncate">
+                                  {homePlayerNames || <span className="text-slate-300">선수 선택</span>}
+                                </p>
+                              </div>
+                              <input type="number" inputMode="numeric" value={m.s1} onFocus={e=>e.target.select()} onChange={e=>{const ns=[...sub];ns[ri][mi].s1=e.target.value;setSub(ns);}} className="w-10 sm:w-12 text-center font-black border border-slate-200 rounded p-1 text-sm sm:text-base shrink-0"/>
+                              <span className="text-[10px] sm:text-[12px] font-black text-slate-300 italic shrink-0">VS</span>
+                              <input type="number" inputMode="numeric" value={m.s2} onFocus={e=>e.target.select()} onChange={e=>{const ns=[...sub];ns[ri][mi].s2=e.target.value;setSub(ns);}} className="w-10 sm:w-12 text-center font-black border border-slate-200 rounded p-1 text-sm sm:text-base shrink-0"/>
+                              <div className="flex-1 min-w-0 text-right">
+                                <p className="text-[10px] sm:text-xs font-bold text-slate-700 truncate">
+                                  {awayPlayerNames || <span className="text-slate-300">선수 선택</span>}
+                                </p>
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ))}
                 </div>
@@ -1413,7 +1535,7 @@
                 <button onClick={handleSave} className="w-full py-3 sm:py-4 bg-blue-600 text-white rounded-xl sm:rounded-2xl font-black hover:bg-blue-700 shadow-lg shadow-blue-100 text-sm sm:text-base">결과 저장</button>
                 <div className="flex gap-2">
                   <button onClick={onClose} className="flex-1 py-2.5 sm:py-3 bg-slate-100 text-slate-500 rounded-xl font-bold text-sm sm:text-base">닫기</button>
-                  {match.status==='completed'&&<button onClick={()=>onSave(match.id,0,0,null,true)} className="flex-1 py-2.5 sm:py-3 bg-red-50 text-red-500 rounded-xl font-bold hover:bg-red-100 text-sm sm:text-base">결과 초기화</button>}
+                  {match.status==='completed'&&<button onClick={()=>onSave(match.id,0,0,null,null,true)} className="flex-1 py-2.5 sm:py-3 bg-red-50 text-red-500 rounded-xl font-bold hover:bg-red-100 text-sm sm:text-base">결과 초기화</button>}
                 </div>
               </div>
             </div>
@@ -3368,14 +3490,15 @@ function getSheetUrl() {
         });
         autoAdvanceByes(updated,'k');return updated;
       };
-      const handleUpdateLeagueMatch=(mid,s1,s2,setScores=null,isReset=false)=>{
+      const handleUpdateLeagueMatch=(mid,s1,s2,setScores=null,lineup=null,isReset=false)=>{
         if(!selectedLeagueMatch)return;
         const{groupId}=selectedLeagueMatch;
         const buildUpdate = (m) => {
           if(m.id!==mid) return m;
-          if(isReset) return {...m,scoreHome:0,scoreAway:0,setScores:null,status:'pending'};
+          if(isReset) return {...m,scoreHome:0,scoreAway:0,setScores:null,lineup:null,status:'pending'};
           const upd = {...m,scoreHome:s1,scoreAway:s2,status:'completed'};
           if(setScores) upd.setScores = setScores;
+          if(lineup) upd.lineup = lineup;
           return upd;
         };
         if(groupId){
