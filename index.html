@@ -1872,7 +1872,7 @@
           </div>
           <div className="flex gap-4 pt-4 border-t">
             <button onClick={onBack} className="flex-1 py-4 bg-slate-100 text-slate-500 rounded-2xl font-bold">이전</button>
-            <button onClick={()=>onComplete(teams.map(t=>({id:t.id,name:t.name,isSeeded:t.isSeeded,seedRank:t.seedRank})))} disabled={teams.length<2}
+            <button onClick={()=>onComplete(teams.map(t=>({id:t.id,name:t.name,isSeeded:t.isSeeded,seedRank:t.seedRank,members:t.members||[]})))} disabled={teams.length<2}
               className={`flex-[2] py-4 rounded-2xl font-black text-xl shadow-lg ${teams.length>=2?'bg-blue-600 text-white':'bg-slate-100 text-slate-300'}`}>팀 구성 완료</button>
           </div>
         </div>
