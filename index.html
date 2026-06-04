@@ -854,6 +854,7 @@
                 <div key={si} className={`border-b border-slate-50 last:border-0 ${isEditing?'bg-blue-50':''}`}>
                   {/* 슬롯 요약 행 */}
                   <div className="flex items-center gap-1.5 px-2 py-1.5">
+                    <span className="w-5 h-5 shrink-0 rounded bg-blue-600 text-white flex items-center justify-center text-[11px] font-black">{si+1}</span>
                     <span className="w-6 text-xs font-black text-slate-400 text-center shrink-0">{label}</span>
                     <button onClick={()=>setEditingSlot(isEditing?null:si)}
                       className="flex-1 min-w-0 flex items-center gap-1 text-left hover:opacity-70 transition-opacity">
