@@ -816,7 +816,7 @@
         const newLineup = Array.from({length:1}, (_,ri) =>
           Array.from({length:totalSlots}, (_,sj) => {
             const ex = lineup?.[0]?.[sj];
-            return { homePlayers:[...(ex?.homePlayers||[])], awayPlayers:[...(ex?.awayPlayers||[])] };
+            return { ...(ex||{}), homePlayers:[...(ex?.homePlayers||[])], awayPlayers:[...(ex?.awayPlayers||[])] };
           })
         );
         const key = side==='home' ? 'homePlayers' : 'awayPlayers';
@@ -826,6 +826,27 @@
         cur[pos] = value || null;
         newLineup[0][si][key] = cur.slice(0, needed);
         onUpdateLineup && onUpdateLineup(m.id, newLineup);
+      };
+
+      // 슬롯 점수 직접 입력/저장
+      const [draftScores, setDraftScores] = React.useState({});
+      const saveSlotScore = (si) => {
+        const tf = TEAM_FORMATS.find(f=>f.id===config?.teamFormat);
+        const totalSlots = tf?.matches || 3;
+        const d = draftScores[si] || {};
+        const ex0 = lineup?.[0]?.[si];
+        const sh = parseInt(d.h!==undefined?d.h:(ex0?.slotScoreHome??0),10)||0;
+        const sa = parseInt(d.a!==undefined?d.a:(ex0?.slotScoreAway??0),10)||0;
+        const newLineup = Array.from({length:1}, () =>
+          Array.from({length:totalSlots}, (_,sj) => {
+            const ex = lineup?.[0]?.[sj];
+            const base = { ...(ex||{}), homePlayers:[...(ex?.homePlayers||[])], awayPlayers:[...(ex?.awayPlayers||[])] };
+            if(sj===si){ base.slotScoreHome=sh; base.slotScoreAway=sa; base.slotStatus='completed'; }
+            return base;
+          })
+        );
+        onUpdateLineup && onUpdateLineup(m.id, newLineup);
+        setEditingSlot(null);
       };
 
       return (
@@ -921,6 +942,19 @@
                               className="w-full text-[10px] font-bold p-1 bg-white border border-rose-200 rounded outline-none focus:border-rose-500"/>
                           );
                         })}
+                      </div>
+                      {/* 슬롯 점수 직접 입력 + 저장 */}
+                      <div className="col-span-2 flex items-center justify-center flex-wrap gap-2 pt-2 mt-1 border-t border-slate-100">
+                        <span className="text-[11px] font-black text-blue-600 truncate max-w-[80px]">{m.home.name}</span>
+                        <input type="number" min="0" value={draftScores[si]?.h!==undefined?draftScores[si].h:(lineup?.[0]?.[si]?.slotScoreHome??'')}
+                          onChange={e=>setDraftScores(p=>({...p,[si]:{...p[si],h:e.target.value}}))}
+                          className="w-12 text-center text-base font-black p-1 bg-white border border-blue-300 rounded outline-none focus:border-blue-500"/>
+                        <span className="font-black text-slate-400">:</span>
+                        <input type="number" min="0" value={draftScores[si]?.a!==undefined?draftScores[si].a:(lineup?.[0]?.[si]?.slotScoreAway??'')}
+                          onChange={e=>setDraftScores(p=>({...p,[si]:{...p[si],a:e.target.value}}))}
+                          className="w-12 text-center text-base font-black p-1 bg-white border border-rose-300 rounded outline-none focus:border-rose-500"/>
+                        <span className="text-[11px] font-black text-rose-600 truncate max-w-[80px]">{m.away.name}</span>
+                        <button onClick={()=>saveSlotScore(si)} className="ml-1 text-xs font-black bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg active:scale-95 transition-all">점수 저장</button>
                       </div>
                     </div>
                   )}
@@ -3801,7 +3835,16 @@ function getSheetUrl() {
       };
       // 카드에서 직접 lineup만 업데이트 (모달 없이)
       const handleUpdateLineup=(matchId, newLineup, groupId=null)=>{
-        const buildUpdate = (m) => m.id!==matchId ? m : {...m, lineup: newLineup};
+        const buildUpdate = (m) => {
+          if(m.id!==matchId) return m;
+          const slots = (newLineup&&newLineup[0])||[];
+          const scored = slots.filter(x=>x&&x.slotStatus);
+          if(scored.length===0) return {...m, lineup:newLineup};
+          let th=0, ta=0;
+          slots.forEach(x=>{const sh=(x&&x.slotScoreHome)||0, sa=(x&&x.slotScoreAway)||0; if(sh>sa) th++; else if(sa>sh) ta++;});
+          const allDone = slots.length>0 && slots.every(x=>x&&x.slotStatus==='completed');
+          return {...m, lineup:newLineup, scoreHome:th, scoreAway:ta, status: allDone?'completed':'in_progress'};
+        };
         if(groupId){
           setGeneratedGroups(prev=>prev.map(g=>{
             if(g.id!==groupId)return g;
