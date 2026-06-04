@@ -489,25 +489,25 @@
       }
     }
 
-    function generateLeagueSchedule(participants, groupPrefix='', extraRounds=1) {
+    function generateLeagueSchedule(participants, groupPrefix='', teamRounds=1) {
       const teams=[...participants];
       const isOdd=teams.length%2!==0;
       if(isOdd) teams.push({id:`bye-${groupPrefix}-${Math.random()}`,name:'휴식(Bye)',isSeeded:false});
       const tc=teams.length; const baseNr=tc-1; const half=tc/2;
-      // extraRounds: 풀리그 몇 바퀴 (기본 1바퀴, teamRounds=2면 2바퀴)
-      const totalNr = baseNr * extraRounds;
+      // 단체전(팀 2개)일 때는 teamRounds를 그대로 라운드 수로 사용
+      // 개인전(팀 다수)일 때는 풀리그 * teamRounds 바퀴
+      const totalNr = Math.max(baseNr, 1) * Math.max(teamRounds, 1);
       const rounds=[];
-      const list=[...teams];
       let globalRound=0;
-      for(let loop=0;loop<extraRounds;loop++){
-        const loopList=[...teams]; // 매 바퀴 처음부터
-        for(let i=0;i<baseNr;i++){
-          globalRound++;
-          const matches=[];
-          for(let j=0;j<half;j++) matches.push({id:`l-g${groupPrefix}-r${globalRound-1}-m${j}`,home:loopList[j],away:loopList[tc-1-j],status:'pending'});
-          rounds.push({roundNumber:globalRound,matches});
-          loopList.splice(1,0,loopList.pop());
-        }
+      for(let loop=0;loop<totalNr;loop++){
+        globalRound++;
+        const loopList=[...teams];
+        // 라운드별로 조합 회전
+        const rot = loop % Math.max(baseNr,1);
+        for(let r=0;r<rot;r++) loopList.splice(1,0,loopList.pop());
+        const matches=[];
+        for(let j=0;j<half;j++) matches.push({id:`l-g${groupPrefix}-r${loop}-m${j}`,home:loopList[j],away:loopList[tc-1-j],status:'pending'});
+        rounds.push({roundNumber:globalRound,matches});
       }
       return rounds;
     }
@@ -853,12 +853,11 @@
                       const isTeamMatch = config?.matchType === 'team';
                       const tf = TEAM_FORMATS.find(f=>f.id===config?.teamFormat);
                       const nm = tf?.matches || 3;
-                      const nr = config?.teamRounds || 1;
                       const lineup = m.lineup || null;
 
-                      // 슬롯별 선수명 추출 헬퍼
-                      const getSlotNames = (side, ri2, si) => {
-                        const slot = lineup?.[ri2]?.[si];
+                      // 슬롯별 선수명 추출 헬퍼 (라운드 0번만 — 매치 당 슬롯 표시)
+                      const getSlotNames = (side, si) => {
+                        const slot = lineup?.[0]?.[si];
                         const players = side==='home' ? (slot?.homePlayers||[]) : (slot?.awayPlayers||[]);
                         const members = side==='home' ? (m.home?.members||[]) : (m.away?.members||[]);
                         return players.filter(Boolean).map(v=>{
@@ -873,31 +872,32 @@
                           <button onClick={()=>onMatchClick(m)}
                             className={`flex-1 min-w-0 border transition-all group ${baseColor} ${isTeamMatch?'rounded-xl p-2':'flex items-center justify-between gap-1 text-base p-2.5 rounded-xl'}`}>
                             {isTeamMatch ? (
-                              /* 단체전: 슬롯별 선수명 목록 */
-                              <div className="space-y-1">
-                                {done&&(
-                                  <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-slate-100">
-                                    <span className={`text-xs font-black ${(m.scoreHome||0)>(m.scoreAway||0)?'text-blue-700':'text-slate-400'}`}>{m.home.name}</span>
-                                    <span className="text-xs font-black text-slate-900 bg-white border border-slate-100 px-2 py-0.5 rounded shadow-sm">{m.scoreHome} : {m.scoreAway}</span>
-                                    <span className={`text-xs font-black ${(m.scoreAway||0)>(m.scoreHome||0)?'text-blue-700':'text-slate-400'}`}>{m.away.name}</span>
-                                  </div>
-                                )}
-                                {Array.from({length:nr}).map((_,ri2)=>
-                                  Array.from({length:nm}).map((_,si)=>{
+                              /* 단체전: 팀명 + 슬롯별 선수명 */
+                              <div className="space-y-1.5">
+                                {/* 팀명 + 총점 헤더 */}
+                                <div className="flex items-center justify-between">
+                                  <span className={`text-[12px] font-black truncate ${done&&(m.scoreHome||0)>(m.scoreAway||0)?'text-blue-700':'text-slate-700'}`}>{m.home.name}</span>
+                                  <span className="text-[11px] font-black text-slate-400 mx-1 shrink-0">
+                                    {done?<span className="text-slate-900 bg-white border border-slate-100 px-2 py-0.5 rounded shadow-sm">{m.scoreHome}:{m.scoreAway}</span>:'VS'}
+                                  </span>
+                                  <span className={`text-[12px] font-black truncate text-right ${done&&(m.scoreAway||0)>(m.scoreHome||0)?'text-blue-700':'text-slate-700'}`}>{m.away.name}</span>
+                                </div>
+                                {/* 슬롯별 선수 */}
+                                <div className="border-t border-slate-100 pt-1 space-y-0.5">
+                                  {Array.from({length:nm}).map((_,si)=>{
                                     const label = getMatchSlotLabel(config?.teamFormat, si);
-                                    const homeNames = getSlotNames('home', ri2, si);
-                                    const awayNames = getSlotNames('away', ri2, si);
-                                    const slotDone = lineup?.[ri2]?.[si];
+                                    const homeNames = getSlotNames('home', si);
+                                    const awayNames = getSlotNames('away', si);
                                     return (
-                                      <div key={`${ri2}-${si}`} className="grid grid-cols-[28px_1fr_auto_1fr] items-center gap-1 text-[11px]">
+                                      <div key={si} className="grid grid-cols-[24px_1fr_14px_1fr] items-center gap-0.5 text-[10px]">
                                         <span className="font-black text-slate-400 text-center">{label}</span>
-                                        <span className={`font-bold truncate text-left ${homeNames?'text-slate-800':'text-slate-300 italic'}`}>{homeNames||'미배정'}</span>
-                                        <span className="text-slate-200 font-black text-center px-0.5">VS</span>
-                                        <span className={`font-bold truncate text-right ${awayNames?'text-slate-800':'text-slate-300 italic'}`}>{awayNames||'미배정'}</span>
+                                        <span className={`font-bold truncate ${homeNames?'text-slate-700':'text-slate-300 italic'}`}>{homeNames||'미배정'}</span>
+                                        <span className="text-slate-200 font-black text-center">:</span>
+                                        <span className={`font-bold truncate text-right ${awayNames?'text-slate-700':'text-slate-300 italic'}`}>{awayNames||'미배정'}</span>
                                       </div>
                                     );
-                                  })
-                                )}
+                                  })}
+                                </div>
                               </div>
                             ) : (
                               /* 개인전: 기존 표시 */
