@@ -858,13 +858,13 @@
                     <span className="w-7 text-sm font-black text-slate-400 text-center shrink-0">{label}</span>
                     <button onClick={()=>setEditingSlot(isEditing?null:si)}
                       className="flex-1 min-w-0 flex items-center gap-2 text-left hover:opacity-70 transition-opacity">
-                      <span className={`flex-1 text-base font-bold truncate ${homeNames?'text-slate-700':'text-slate-300 italic'}`}>{homeNames||'미배정'}</span>
+                      <span className={`flex-1 min-w-0 text-base font-bold break-words leading-tight ${homeNames?'text-slate-700':'text-slate-300 italic'}`}>{homeNames||'미배정'}</span>
                       <span className="text-slate-200 font-black text-base px-1.5 shrink-0">
                         {(lineup?.[0]?.[si]?.slotStatus==='completed')
                           ? <span className="text-slate-700 font-black">{lineup[0][si].slotScoreHome}:{lineup[0][si].slotScoreAway}</span>
                           : ':'}
                       </span>
-                      <span className={`flex-1 text-base font-bold truncate text-right ${awayNames?'text-slate-700':'text-slate-300 italic'}`}>{awayNames||'미배정'}</span>
+                      <span className={`flex-1 min-w-0 text-base font-bold break-words leading-tight text-right ${awayNames?'text-slate-700':'text-slate-300 italic'}`}>{awayNames||'미배정'}</span>
                     </button>
                     <button onClick={()=>setEditingSlot(isEditing?null:si)}
                       className={`w-8 h-8 rounded-md text-base flex items-center justify-center shrink-0 transition-all ${isEditing?'bg-blue-500 text-white':'bg-slate-100 text-slate-400 hover:bg-blue-100'}`}>
@@ -971,7 +971,7 @@
             </button>
           </div>
           {!collapsed&&(
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {rounds.map((round, ri)=>(
                 <div key={`r${ri}-${round.roundNumber}`} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
                   <div className="bg-slate-800 px-4 py-2.5 flex justify-between items-center">
