@@ -832,11 +832,11 @@
         <div className={`flex-1 min-w-0 border rounded-xl overflow-hidden ${baseColor.replace('flex items-center justify-between gap-1 text-base p-2.5','')}`}>
           {/* 팀명 헤더 — 클릭 시 점수 입력 모달 */}
           <button onClick={()=>onMatchClick(m)} className="w-full flex items-center justify-between px-2.5 py-2 hover:bg-blue-50 transition-colors">
-            <span className={`text-sm font-black truncate ${done&&(m.scoreHome||0)>(m.scoreAway||0)?'text-blue-700':'text-slate-700'}`}>{m.home.name}</span>
-            <span className="text-sm font-black text-slate-400 mx-1 shrink-0">
+            <span className={`text-base font-black truncate ${done&&(m.scoreHome||0)>(m.scoreAway||0)?'text-blue-700':'text-slate-700'}`}>{m.home.name}</span>
+            <span className="text-base font-black text-slate-400 mx-1 shrink-0">
               {done?<span className="text-slate-900 bg-white border border-slate-100 px-2 py-0.5 rounded shadow-sm">{m.scoreHome}:{m.scoreAway}</span>:'VS'}
             </span>
-            <span className={`text-sm font-black truncate text-right ${done&&(m.scoreAway||0)>(m.scoreHome||0)?'text-blue-700':'text-slate-700'}`}>{m.away.name}</span>
+            <span className={`text-base font-black truncate text-right ${done&&(m.scoreAway||0)>(m.scoreHome||0)?'text-blue-700':'text-slate-700'}`}>{m.away.name}</span>
           </button>
           {/* 슬롯별 행 */}
           <div className="border-t border-slate-100">
@@ -853,26 +853,26 @@
               return (
                 <div key={si} className={`border-b border-slate-50 last:border-0 ${isEditing?'bg-blue-50':''}`}>
                   {/* 슬롯 요약 행 */}
-                  <div className="flex items-center gap-1.5 px-2 py-1.5">
-                    <span className="w-5 h-5 shrink-0 rounded bg-blue-600 text-white flex items-center justify-center text-[11px] font-black">{si+1}</span>
-                    <span className="w-6 text-xs font-black text-slate-400 text-center shrink-0">{label}</span>
+                  <div className="flex items-center gap-2 px-2.5 py-2.5">
+                    <span className="w-7 h-7 shrink-0 rounded-md bg-blue-600 text-white flex items-center justify-center text-sm font-black">{si+1}</span>
+                    <span className="w-7 text-sm font-black text-slate-400 text-center shrink-0">{label}</span>
                     <button onClick={()=>setEditingSlot(isEditing?null:si)}
-                      className="flex-1 min-w-0 flex items-center gap-1 text-left hover:opacity-70 transition-opacity">
-                      <span className={`flex-1 text-[13px] font-bold truncate ${homeNames?'text-slate-700':'text-slate-300 italic'}`}>{homeNames||'미배정'}</span>
-                      <span className="text-slate-200 font-black text-[13px] px-1 shrink-0">
+                      className="flex-1 min-w-0 flex items-center gap-2 text-left hover:opacity-70 transition-opacity">
+                      <span className={`flex-1 text-base font-bold truncate ${homeNames?'text-slate-700':'text-slate-300 italic'}`}>{homeNames||'미배정'}</span>
+                      <span className="text-slate-200 font-black text-base px-1.5 shrink-0">
                         {(lineup?.[0]?.[si]?.slotStatus==='completed')
                           ? <span className="text-slate-700 font-black">{lineup[0][si].slotScoreHome}:{lineup[0][si].slotScoreAway}</span>
                           : ':'}
                       </span>
-                      <span className={`flex-1 text-[13px] font-bold truncate text-right ${awayNames?'text-slate-700':'text-slate-300 italic'}`}>{awayNames||'미배정'}</span>
+                      <span className={`flex-1 text-base font-bold truncate text-right ${awayNames?'text-slate-700':'text-slate-300 italic'}`}>{awayNames||'미배정'}</span>
                     </button>
                     <button onClick={()=>setEditingSlot(isEditing?null:si)}
-                      className={`w-7 h-7 rounded text-sm flex items-center justify-center shrink-0 transition-all ${isEditing?'bg-blue-500 text-white':'bg-slate-100 text-slate-400 hover:bg-blue-100'}`}>
+                      className={`w-8 h-8 rounded-md text-base flex items-center justify-center shrink-0 transition-all ${isEditing?'bg-blue-500 text-white':'bg-slate-100 text-slate-400 hover:bg-blue-100'}`}>
                       {isEditing?'✓':'✏️'}
                     </button>
                     {onScoreboardLink&&(
                       <button onClick={()=>onScoreboardLink(m.id, si)}
-                        className="w-7 h-7 bg-slate-100 hover:bg-purple-100 text-slate-400 hover:text-purple-600 rounded flex items-center justify-center text-sm transition-all shrink-0" title={`${label} 스코어보드`}>
+                        className="w-8 h-8 bg-slate-100 hover:bg-purple-100 text-slate-400 hover:text-purple-600 rounded-md flex items-center justify-center text-base transition-all shrink-0" title={`${label} 스코어보드`}>
                         📺
                       </button>
                     )}
@@ -1014,7 +1014,7 @@
 
                       return (
                         <div key={`r${ri}-m${mi}-${m.id}`} className="flex gap-1.5 items-stretch">
-                          <span className={`w-9 shrink-0 rounded-lg flex items-center justify-center text-base font-black ${hasAbsent?'bg-amber-400 text-white':'bg-blue-600 text-white'}`}>{matchNo}</span>
+                          {!isTeamMatch&&(<span className={`w-9 shrink-0 rounded-lg flex items-center justify-center text-base font-black ${hasAbsent?'bg-amber-400 text-white':'bg-blue-600 text-white'}`}>{matchNo}</span>)}
                           {isTeamMatch ? (
                             /* 단체전: 팀명 헤더 + 슬롯별 인라인 편집 */
                             <TeamMatchCard
