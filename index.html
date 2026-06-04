@@ -858,7 +858,11 @@
                     <button onClick={()=>setEditingSlot(isEditing?null:si)}
                       className="flex-1 min-w-0 flex items-center gap-1 text-left hover:opacity-70 transition-opacity">
                       <span className={`flex-1 text-[10px] font-bold truncate ${homeNames?'text-slate-700':'text-slate-300 italic'}`}>{homeNames||'미배정'}</span>
-                      <span className="text-slate-200 font-black text-[10px] px-0.5 shrink-0">:</span>
+                      <span className="text-slate-200 font-black text-[10px] px-0.5 shrink-0">
+                        {(lineup?.[0]?.[si]?.slotStatus==='completed')
+                          ? <span className="text-slate-700 font-black">{lineup[0][si].slotScoreHome}:{lineup[0][si].slotScoreAway}</span>
+                          : ':'}
+                      </span>
                       <span className={`flex-1 text-[10px] font-bold truncate text-right ${awayNames?'text-slate-700':'text-slate-300 italic'}`}>{awayNames||'미배정'}</span>
                     </button>
                     <button onClick={()=>setEditingSlot(isEditing?null:si)}
@@ -2371,51 +2375,73 @@
           const sA=hist.filter(s=>s.a>s.b).length;
           const sB=hist.filter(s=>s.b>s.a).length;
           const isLeague=!!match.home;
-          const matchUpdate = isLeague ? {
-            [`${match.id}`]: {
-              ...match,
-              scoreHome: sA, scoreAway: sB,
-              setScores: hist.map(s=>({h:s.a,a:s.b})),
-              status: isFinal ? 'completed' : 'in_progress'
-            }
-          } : null;
+
+          // 슬롯 스코어보드인지 확인 (_parentMatchId 있으면 슬롯)
+          const isSlot = !!match._parentMatchId;
+          const targetMatchId = isSlot ? match._parentMatchId : match.id;
+          const slotIndex = isSlot ? (match._slotIndex ?? null) : null;
 
           // Firebase에서 현재 대회 데이터 가져와서 해당 경기만 업데이트
           const snap = await db.ref('tournaments/'+tournamentId).once('value');
           const data = snap.val();
           if(!data) return;
 
+          const updateMatch = (m) => {
+            if(m.id !== targetMatchId) return m;
+            if(isSlot && slotIndex !== null){
+              // 슬롯 스코어보드 저장 — lineup[0][slotIndex]에 결과 기록
+              const tf = TEAM_FORMATS.find(f=>f.id===(data.config?.teamFormat));
+              const nm = tf?.matches || 3;
+              const existingLineup = m.lineup || Array.from({length:1},()=>Array.from({length:nm},()=>({homePlayers:[],awayPlayers:[]})));
+              const newLineup = existingLineup.map((round,ri) => round.map((slot,si) => {
+                if(ri===0 && si===slotIndex){
+                  return {...slot, slotScoreHome:sA, slotScoreAway:sB,
+                    slotSetScores: hist.map(s=>({h:s.a,a:s.b})),
+                    slotStatus: isFinal?'completed':'in_progress'};
+                }
+                return slot;
+              }));
+              // 전체 슬롯 합산으로 팀 점수 계산
+              let teamHome=0, teamAway=0;
+              newLineup[0].forEach(slot=>{
+                const sh=slot.slotScoreHome??0, sa=slot.slotScoreAway??0;
+                if(sh>sa) teamHome++; else if(sa>sh) teamAway++;
+              });
+              // 모든 슬롯이 완료됐는지 확인
+              const allDone = newLineup[0].every(slot=>slot.slotStatus==='completed');
+              return {
+                ...m,
+                lineup: newLineup,
+                scoreHome: teamHome,
+                scoreAway: teamAway,
+                status: allDone && isFinal ? 'completed' : 'in_progress'
+              };
+            } else {
+              // 일반 스코어보드 저장
+              return {...m, scoreHome:sA, scoreAway:sB,
+                setScores:hist.map(s=>({h:s.a,a:s.b})),
+                status:isFinal?'completed':'in_progress'};
+            }
+          };
+
           if(isLeague){
-            // 리그/조별 경기
-            let updated = false;
             if(groupId && data.generatedGroups){
               data.generatedGroups = data.generatedGroups.map(g=>{
                 if(g.id!==groupId) return g;
-                return {...g, rounds: g.rounds.map(r=>({...r, matches: r.matches.map(m=>{
-                  if(m.id!==match.id) return m;
-                  updated=true;
-                  return {...m, scoreHome:sA, scoreAway:sB, setScores:hist.map(s=>({h:s.a,a:s.b})), status:isFinal?'completed':'in_progress'};
-                })}))};
+                return {...g, rounds: g.rounds.map(r=>({...r, matches: r.matches.map(updateMatch)}))};
               });
-              // standings 재계산
               const config2=data.config||{};
               const sm2=isSetsGame(config2.sport);
               data.generatedGroups = data.generatedGroups.map(g=>({
-                ...g,
-                standings: calculateStandings(g.participants, g.rounds, sm2)
+                ...g, standings: calculateStandings(g.participants, g.rounds, sm2)
               }));
             } else if(data.generatedLeague){
-              data.generatedLeague = data.generatedLeague.map(r=>({...r, matches: r.matches.map(m=>{
-                if(m.id!==match.id) return m;
-                updated=true;
-                return {...m, scoreHome:sA, scoreAway:sB, setScores:hist.map(s=>({h:s.a,a:s.b})), status:isFinal?'completed':'in_progress'};
-              })}));
+              data.generatedLeague = data.generatedLeague.map(r=>({...r, matches: r.matches.map(updateMatch)}));
             }
           } else {
-            // 토너먼트 경기
             if(data.generatedMatches){
               data.generatedMatches = data.generatedMatches.map(m=>{
-                if(m.id!==match.id) return m;
+                if(m.id!==targetMatchId) return m;
                 const winnerId=sA>sB?(m.participant1?.id||''):(m.participant2?.id||'');
                 return {...m, score1:sA, score2:sB, setScores:hist.map(s=>({h:s.a,a:s.b})), status:isFinal?'completed':'in_progress', winnerId:isFinal?winnerId:m.winnerId};
               });
@@ -3482,7 +3508,10 @@ function getSheetUrl() {
             away: { ...found.away, name: awayNames || found.away.name },
             _slotLabel: slotLabel,
             _parentMatchId: found.id,
-            scoreHome: 0, scoreAway: 0, status: 'pending',
+            _slotIndex: slotIndex,
+            scoreHome: slot?.slotScoreHome ?? 0,
+            scoreAway: slot?.slotScoreAway ?? 0,
+            status: slot?.slotStatus || 'pending',
           };
           setScoreboardMatch({...virtualMatch, tournamentId:currentId, groupId});
           setView('scoreboard');
@@ -3779,7 +3808,18 @@ function getSheetUrl() {
 
       // ── 스코어보드 전용 화면 (헤더 없음, 풀스크린) ──
       if(view==='scoreboard'){
-        const exitScoreboard = () => { setScoreboardMatch(null); setView('active'); };
+        const exitScoreboard = async () => {
+          // 슬롯 스코어보드 저장 후 React 상태 갱신 (Firebase → state 동기화)
+          if(scoreboardMatch?._parentMatchId && currentId){
+            try {
+              const snap = await db.ref('tournaments/'+currentId).once('value');
+              const data = snap.val();
+              if(data?.generatedLeague) setGeneratedLeague(data.generatedLeague);
+              if(data?.generatedGroups) setGeneratedGroups(data.generatedGroups);
+            } catch(e){ console.warn('상태 갱신 실패:', e); }
+          }
+          setScoreboardMatch(null); setView('active');
+        };
         if(!scoreboardMatch) { exitScoreboard(); return null; }
         return (
           <ScoreboardView
