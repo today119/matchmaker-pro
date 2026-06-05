@@ -2252,6 +2252,91 @@
     };
 
     // ================================================================
+    //  🔊 음성 스코어 리더 — Web Speech API (SpeechSynthesis)
+    // ================================================================
+    // 테니스 포인트(인덱스 0~3) → 영어 콜. 0은 테니스 관례대로 'love'.
+    const TENNIS_CALL = ['love','fifteen','thirty','forty'];
+    // 일반 숫자 → 영어 단어 (0~99)
+    const ONES = ['zero','one','two','three','four','five','six','seven','eight','nine','ten',
+                  'eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen'];
+    const TENS = ['','','twenty','thirty','forty','fifty','sixty','seventy','eighty','ninety'];
+    function numWords(n){
+      n = Math.max(0, Math.floor(Number(n)||0));
+      if(n < 20) return ONES[n];
+      if(n < 100){ const t=Math.floor(n/10), o=n%10; return o ? TENS[t]+'-'+ONES[o] : TENS[t]; }
+      return String(n);
+    }
+    // 영어 음성 선택 (en-US 우선) — 브라우저가 비동기로 로드하므로 캐시
+    let _enVoice = null, _voicesReady = false;
+    function refreshVoices(){
+      try{
+        const vs = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+        if(vs && vs.length){
+          _enVoice = vs.find(v=>/en[-_]US/i.test(v.lang)) || vs.find(v=>/^en/i.test(v.lang)) || null;
+          _voicesReady = true;
+        }
+      }catch(e){}
+    }
+    if(typeof window!=='undefined' && window.speechSynthesis){
+      refreshVoices();
+      try{ window.speechSynthesis.onvoiceschanged = refreshVoices; }catch(e){}
+    }
+    function speakEnglish(text){
+      try{
+        const synth = window.speechSynthesis;
+        if(!synth || !text) return;
+        if(!_voicesReady) refreshVoices();
+        synth.cancel();                       // 이전 콜이 밀리지 않도록 취소
+        const u = new SpeechSynthesisUtterance(String(text));
+        u.lang = 'en-US';
+        if(_enVoice) u.voice = _enVoice;
+        u.rate = 1.0; u.pitch = 1.0; u.volume = 1.0;
+        synth.speak(u);
+      }catch(e){ /* 음성 미지원 환경은 무시 */ }
+    }
+    const VOICE_PREF_KEY = 'mm_scoreboard_voice';
+
+    // 🎾 서브권 계산 — 첫 서브(firstServer) 기준, 게임마다 교대.
+    //   타이브레이크는 첫 1포인트 후 2포인트씩 교대(정석 룰).
+    const otherSide = s => s==='A' ? 'B' : 'A';
+    function currentServerSide(state, firstServer){
+      if(!firstServer || firstServer==='skip' || !state) return null;
+      // 지금까지 완료된 총 게임 수 (이전 세트 + 현재 세트). 타이브레이크도 1게임으로 계산됨.
+      const done = (state.setHistory||[]).reduce((s,h)=>s+(h.gA||0)+(h.gB||0),0) + state.gA + state.gB;
+      const gameServer = (done % 2 === 0) ? firstServer : otherSide(firstServer);
+      if(state.isTiebreak){
+        const pts = (state.tbA||0) + (state.tbB||0);   // 지금 칠 포인트의 인덱스
+        const flipped = Math.floor((pts+1)/2) % 2 === 1; // 1-2-2-2… 교대
+        return flipped ? otherSide(gameServer) : gameServer;
+      }
+      return gameServer;
+    }
+
+    // 🏓🏸🏐 종목별 서버 계산 — 현재 세트의 점수로 '다음/직전 서브 측'을 반환.
+    //   firstServer: 이 매치의 첫 서브('A'|'B'|'skip'|null). 세트마다 첫 서버 교대.
+    //   completedSets: 완료된 세트 수(세트 시작 서버 교대용).
+    //   lastScorer: 직전 득점 측('A'|'B'|null) — 랠리 포인트제에서 사용.
+    function genServerSide(sport, firstServer, completedSets, curA, curB, lastScorer){
+      if(!firstServer || firstServer==='skip') return null;
+      // 세트마다 첫 서버 교대 (탁구·배구 관례). 짝수 세트→firstServer, 홀수→상대.
+      const setServer = ((completedSets||0) % 2 === 0) ? firstServer : otherSide(firstServer);
+      const a = Math.max(0, curA|0), b = Math.max(0, curB|0);
+      if(sport==='tabletennis'){
+        // 2점마다 교체, 단 10-10 듀스부터는 1점마다 교체.
+        const t = a + b;
+        const deuce = a>=10 && b>=10;
+        const changes = deuce ? (10 + (t - 20)) : Math.floor(t/2);
+        return (changes % 2 === 0) ? setServer : otherSide(setServer);
+      }
+      if(sport==='badminton' || sport==='volleyball'){
+        // 랠리 포인트제 — 직전 랠리 승자가 다음 서브(사이드아웃). 세트 시작은 setServer.
+        if(a===0 && b===0) return setServer;
+        return lastScorer || setServer;
+      }
+      return null;
+    }
+
+    // ================================================================
     //  ScoreboardView — 코트 태블릿 스코어보드
     // ================================================================
     const ScoreboardView = ({ match, config, tournamentId, groupId, onSaved, onClose }) => {
@@ -2279,6 +2364,25 @@
 
       // 🎾 테니스 전용 상태
       const [tnState, setTnState] = useState(()=>initTennisState());
+
+      // 🔊 음성 스코어 리더 on/off (브라우저에 기억)
+      const [voiceOn, setVoiceOn] = useState(()=>{
+        try { return localStorage.getItem(VOICE_PREF_KEY) === '1'; } catch(e){ return false; }
+      });
+      const toggleVoice = () => {
+        setVoiceOn(v=>{
+          const nv = !v;
+          try { localStorage.setItem(VOICE_PREF_KEY, nv?'1':'0'); } catch(e){}
+          if(nv) speakEnglish('Voice on'); // 사용자 제스처로 오디오 잠금 해제
+          else { try{ window.speechSynthesis && window.speechSynthesis.cancel(); }catch(e){} }
+          return nv;
+        });
+      };
+
+      // 🎾 첫 서브 팀 ('A'=home / 'B'=away). null이면 서브권 미지정(시작 시 선택).
+      const [firstServer, setFirstServer] = useState(null);
+      // 🏓🏸🏐 일반 종목 직전 득점 측('A'|'B') — 랠리 포인트제 서버 추적용
+      const [lastScorer, setLastScorer] = useState(null);
 
       const wonA = tn ? tnState.sA : history.filter(s=>s.a>s.b).length;
       const wonB = tn ? tnState.sB : history.filter(s=>s.b>s.a).length;
@@ -2314,6 +2418,93 @@
         tnLeftPt = String(courtSwapped ? pB : pA);
         tnRightPt = String(courtSwapped ? pA : pB);
       }
+
+      // 🎾 현재 서브권 팀 + 화면 좌/우 서브 표시
+      const serverSide = tn
+        ? currentServerSide(tnState, firstServer)
+        : (sm ? genServerSide(config?.sport, firstServer, history.length, scoreA, scoreB, lastScorer) : null);
+      const serveLeft  = !!serverSide && (courtSwapped ? serverSide==='B' : serverSide==='A');
+      const serveRight = !!serverSide && (courtSwapped ? serverSide==='A' : serverSide==='B');
+      // 서브 표시용 종목 아이콘 + 첫 서브 안내 문구(종목별 교체 규칙)
+      const serveIcon = SPORTS_LIST.find(x=>x.id===config?.sport)?.icon || '🎾';
+      const serveRuleText = tn ? '서브권은 게임마다 자동으로 교대됩니다.'
+        : config?.sport==='tabletennis' ? '서브권은 2점마다 교대됩니다. (10-10 듀스부터 1점마다)'
+        : (config?.sport==='badminton'||config?.sport==='volleyball') ? '랠리(포인트)를 이긴 쪽이 다음 서브를 가져갑니다.'
+        : '서브권은 자동으로 교대됩니다.';
+
+      // 🔊 테니스 — tnState 변화 시 영어로 콜
+      const tnPrevRef = useRef(null);
+      const tnLastStateRef = useRef(null);
+      useEffect(()=>{
+        if(!tn) return;
+        // voiceOn/firstServer만 바뀌고 tnState는 그대로면 현재 점수 재낭독 방지
+        if(tnLastStateRef.current === tnState) return;
+        tnLastStateRef.current = tnState;
+        const prev = tnPrevRef.current;
+        tnPrevRef.current = { gA:tnState.gA, gB:tnState.gB, sA:tnState.sA, sB:tnState.sB };
+        if(!voiceOn || done) return;
+        if(!prev) return; // 첫 마운트는 읽지 않음
+        // 세트 종료 (= 게임 종료 포함)
+        if(tnState.sA > prev.sA || tnState.sB > prev.sB){
+          const winner = tnState.sA > prev.sA ? nameA : nameB;
+          const over = tnState.sA >= winSets || tnState.sB >= winSets;
+          speakEnglish(over ? `Game, set and match. ${winner}.` : `Set. ${winner}.`);
+          return;
+        }
+        // 게임 종료
+        if(tnState.gA > prev.gA || tnState.gB > prev.gB){
+          const winner = tnState.gA > prev.gA ? nameA : nameB;
+          speakEnglish(`Game. ${winner}.`);
+          return;
+        }
+        // 일반 포인트 콜 — 서브권 팀 점수부터. 서브권 미지정 시 화면 좌/우 순서.
+        const srv = currentServerSide(tnState, firstServer); // 'A'|'B'|null
+        // 두 값을 (서브측, 리시브측) 순서로 정렬해주는 헬퍼
+        const order = (valA, valB) => srv==='B'
+          ? [valB, valA]
+          : srv==='A'
+            ? [valA, valB]
+            : (courtSwapped ? [valB, valA] : [valA, valB]); // null=화면순서
+        let call = '';
+        if(tnState.isTiebreak){
+          if(tnState.tbA===0 && tnState.tbB===0) return; // 게임/세트 시작 직후
+          const [f,s] = order(tnState.tbA, tnState.tbB);
+          call = (f===s) ? `${numWords(f)} all` : `${numWords(f)} ${numWords(s)}`;
+        } else if(tnState.isDeuce){
+          if(tnState.advA) call = `Advantage. ${nameA}.`;
+          else if(tnState.advB) call = `Advantage. ${nameB}.`;
+          else call = 'Deuce';
+        } else {
+          if(tnState.pA===0 && tnState.pB===0) return; // 0-0은 콜 안 함
+          const cA = TENNIS_CALL[tnState.pA] || 'forty';
+          const cB = TENNIS_CALL[tnState.pB] || 'forty';
+          const [f,s] = order(cA, cB);
+          call = (tnState.pA===tnState.pB) ? `${f} all` : `${f} ${s}`;
+        }
+        speakEnglish(call);
+      }, [tnState, voiceOn, firstServer]);
+
+      // 🔊 일반 종목 — 점수 변화 시 영어로 콜.
+      //   서브권 종목(배드민턴·탁구·배구)은 '서버 점수 먼저'. 그 외/미지정은 화면 좌/우 순서.
+      const genPrevRef = useRef(null);
+      useEffect(()=>{
+        if(tn) return;
+        const prev = genPrevRef.current;
+        genPrevRef.current = { a:scoreA, b:scoreB };
+        if(!voiceOn || done) return;
+        if(!prev) return;                       // 첫 마운트
+        if(scoreA===prev.a && scoreB===prev.b) return;
+        if(scoreA===0 && scoreB===0) return;    // 세트 종료 리셋은 읽지 않음
+        // 직전 득점 측(랠리 승자) — prev 대비 어느 쪽이 올랐는지로 판정
+        const scorer = scoreA>prev.a ? 'A' : scoreB>prev.b ? 'B' : null;
+        // 서버 계산(세트제 종목만). 서버가 정해지면 서버 점수를 먼저 부른다.
+        const srv = sm ? genServerSide(config?.sport, firstServer, history.length, scoreA, scoreB, scorer) : null;
+        let f, r;
+        if(srv==='A'){ f = scoreA; r = scoreB; }
+        else if(srv==='B'){ f = scoreB; r = scoreA; }
+        else { f = courtSwapped ? scoreB : scoreA; r = courtSwapped ? scoreA : scoreB; } // 미지정=화면순서
+        speakEnglish(`${numWords(f)} ${numWords(r)}`);
+      }, [scoreA, scoreB, voiceOn]);
 
       // 좌/우 클릭 시 어느 쪽 점수가 올라갈지
       const adjLeft  = (delta) => adj(courtSwapped ? 'B' : 'A', delta);
@@ -2393,6 +2584,7 @@
           return;
         }
         // 일반 종목
+        if(delta>0) setLastScorer(side);   // 직전 득점 측 = 다음 서버(랠리 포인트제)
         if(side==='A') setScoreA(v=>Math.max(0,v+delta));
         else           setScoreB(v=>Math.max(0,v+delta));
       };
@@ -2402,6 +2594,7 @@
         const newHistory=[...history,{a:scoreA,b:scoreB}];
         setHistory(newHistory);
         setScoreA(0); setScoreB(0);
+        setLastScorer(null);              // 새 세트 — 서버는 세트 시작 규칙으로 리셋
         setCurSet(v=>v+1);
         // 세트 종료 후 Firebase에 중간 저장
         saveToFirebase(newHistory, false);
@@ -2524,26 +2717,56 @@
       );
 
       return (
-        <div className="min-h-screen bg-slate-900 flex flex-col select-none" style={{touchAction:'manipulation'}}>
+        <div className="min-h-screen bg-slate-900 flex flex-col select-none relative" style={{touchAction:'manipulation'}}>
+          {/* 🏓🏸🏐🎾 첫 서브 선택 — 세트제(서브권) 종목에서 미지정 시 시작 화면 */}
+          {sm && firstServer===null && !done && (
+            <div className="absolute inset-0 z-50 bg-slate-900/95 flex flex-col items-center justify-center gap-6 sm:gap-8 p-6">
+              <div className="text-center">
+                <p className="text-5xl sm:text-6xl mb-3">{serveIcon}</p>
+                <p className="text-white font-black text-2xl sm:text-3xl">첫 서브는 누구?</p>
+                <p className="text-slate-400 font-bold text-sm sm:text-base mt-2">{serveRuleText}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3 sm:gap-4 w-full max-w-2xl">
+                <button onClick={()=>setFirstServer('A')}
+                  className="py-8 sm:py-12 rounded-2xl bg-blue-600 hover:bg-blue-500 active:scale-95 transition-all text-white font-black text-xl sm:text-3xl break-all px-3">{nameA}</button>
+                <button onClick={()=>setFirstServer('B')}
+                  className="py-8 sm:py-12 rounded-2xl bg-rose-600 hover:bg-rose-500 active:scale-95 transition-all text-white font-black text-xl sm:text-3xl break-all px-3">{nameB}</button>
+              </div>
+              <button onClick={()=>setFirstServer('skip')}
+                className="text-slate-500 hover:text-slate-300 text-sm font-bold underline underline-offset-4">서브권 표시 없이 시작</button>
+            </div>
+          )}
           {/* 상단 — 대회명 + 닫기 (얇게) */}
           <div className="bg-slate-800 px-3 sm:px-6 py-2 flex justify-between items-center shrink-0 gap-2 sm:gap-4">
             <div className="min-w-0 flex items-baseline gap-1.5 sm:gap-3">
               <p className="text-xs sm:text-sm font-black text-slate-300 truncate">{config?.name}</p>
               <p className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest shrink-0">{match._slotLabel&&<span className="text-amber-400 mr-1">{match._slotLabel}</span>}{sm?`${totalSets===1?'단판':totalSets+'판 '+winSets+'선승'}`:''} {match.court?`· ${match.court}코트`:''}</p>
             </div>
-            {onClose&&(
-              <button onClick={onClose}
-                className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-slate-700 hover:bg-slate-600 text-white flex items-center justify-center text-base sm:text-lg active:scale-90 transition-all shrink-0" title="닫기">✕</button>
-            )}
+            <div className="flex items-center gap-2 shrink-0">
+              {/* 🔊 음성 스코어 리더 on/off — 포인트 시 영어로 점수 콜 */}
+              <button onClick={toggleVoice}
+                className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center text-base sm:text-lg active:scale-90 transition-all ${voiceOn?'bg-blue-600 hover:bg-blue-500 text-white':'bg-slate-700 hover:bg-slate-600 text-slate-400'}`}
+                title={voiceOn?'음성 콜 끄기 (영어)':'음성 콜 켜기 (영어)'}>
+                {voiceOn?'🔊':'🔇'}
+              </button>
+              {onClose&&(
+                <button onClick={onClose}
+                  className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-slate-700 hover:bg-slate-600 text-white flex items-center justify-center text-base sm:text-lg active:scale-90 transition-all" title="닫기">✕</button>
+              )}
+            </div>
           </div>
 
           {/* 선수명 — 헤더 바로 아래 */}
           <div className="bg-slate-900 grid grid-cols-2 divide-x divide-slate-700 shrink-0 border-b border-slate-800">
             <div className="text-center py-3 sm:py-4">
-              <p className="text-white font-black text-xl sm:text-3xl md:text-4xl leading-tight break-all px-2">{leftName}</p>
+              <p className="text-white font-black text-xl sm:text-3xl md:text-4xl leading-tight break-all px-2">
+                {serveLeft&&<span className="text-amber-400 mr-1.5" title="서브권">{serveIcon}</span>}{leftName}
+              </p>
             </div>
             <div className="text-center py-3 sm:py-4">
-              <p className="text-white font-black text-xl sm:text-3xl md:text-4xl leading-tight break-all px-2">{rightName}</p>
+              <p className="text-white font-black text-xl sm:text-3xl md:text-4xl leading-tight break-all px-2">
+                {serveRight&&<span className="text-amber-400 mr-1.5" title="서브권">{serveIcon}</span>}{rightName}
+              </p>
             </div>
           </div>
 
