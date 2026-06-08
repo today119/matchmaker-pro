@@ -3585,10 +3585,16 @@ function getSheetUrl() {
     }
 
     function GroupSchedule({ group, result, options, courtLabel, scores, onScore, onScoreboard }) {
-      const c = COLORS[group.color] || COLORS.blue;
-      const r = result;
+      const c = COLORS[(group && group.color)] || COLORS.blue;
       const sc = scores || {};
-      if (!r) return null;
+      if (!result) return null;
+      // Firebase가 빈 배열을 제거하므로 모든 배열 필드를 방어적으로 복원
+      const r = {
+        ...result,
+        rounds: (result.rounds || []).map(rd => ({ ...rd, teamA: rd.teamA || [], teamB: rd.teamB || [], waiting: rd.waiting || [] })),
+        warnings: result.warnings || [],
+        perPlayer: (result.perPlayer || []).map(p => ({ ...p, partners: p.partners || [], opponents: p.opponents || [] })),
+      };
 
       return (
         <div className={`group-page ${options.printMode === 'each' ? 'page-each' : ''} bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden print-area mb-6`}>
