@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Round Robin Doubles — 복식 라운드 로빈 · MatchMaker Pro</title>
-  <meta name="description" content="피클볼 수업용 라운드 로빈 복식 로테이션 자동 생성기" />
+  <title>KDK 방식 — 라운드 로빈 복식 · MatchMaker Pro</title>
+  <meta name="description" content="피클볼 수업용 KDK 방식(라운드 로빈 복식) 로테이션 자동 생성기" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" href="icons/favicon-64.png" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
@@ -61,6 +61,100 @@
         .split(/[\n,]/).map(s => s.trim()).filter(Boolean);
     }
 
+    // ── 점수 → 개인 순위 통계 (KDK: 본인 팀 점수를 개인 득점으로 합산) ──
+    //  승점: 승 2 · 무 1 · 패 0
+    function computeStandings(result, groupScores) {
+      const stat = {};
+      result.perPlayer.forEach(p => { stat[p.name] = { name: p.name, played: 0, win: 0, draw: 0, loss: 0, pts: 0, pf: 0 }; });
+      let entered = 0;
+      result.rounds.forEach(rd => {
+        const s = groupScores && groupScores[rd.round];
+        if (!s) return;
+        const a = parseInt(s.a, 10), b = parseInt(s.b, 10);
+        if (isNaN(a) || isNaN(b)) return;
+        entered++;
+        const apply = (names, my, opp) => names.forEach(n => {
+          const t = stat[n]; if (!t) return;
+          t.played++; t.pf += my;
+          if (my > opp) { t.win++; t.pts += 2; }
+          else if (my < opp) { t.loss++; }
+          else { t.draw++; t.pts += 1; }
+        });
+        apply(rd.teamA, a, b);
+        apply(rd.teamB, b, a);
+      });
+      const rows = Object.values(stat).map(t => ({ ...t, avg: t.played ? +(t.pf / t.played).toFixed(2) : 0 }));
+      return { rows, entered };
+    }
+
+    function sortStandings(rows, by) {
+      const r = rows.slice();
+      if (by === 'pf') r.sort((a, b) => b.pf - a.pf || b.pts - a.pts || b.avg - a.avg || a.name.localeCompare(b.name));
+      else if (by === 'avg') r.sort((a, b) => b.avg - a.avg || b.pts - a.pts || b.pf - a.pf || a.name.localeCompare(b.name));
+      else r.sort((a, b) => b.pts - a.pts || b.avg - a.avg || b.pf - a.pf || a.name.localeCompare(b.name));
+      return r;
+    }
+
+    // ── 순위표 (승점 / 총득점 / 평균득점 정렬) ────────────────
+    function StandingsTable({ result, scores, color }) {
+      const c = COLORS[color] || COLORS.blue;
+      const [by, setBy] = useState('pts');
+      const { rows, entered } = computeStandings(result, scores);
+      if (entered === 0) {
+        return (
+          <div className="mt-3 text-[12px] text-slate-400 font-bold bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+            🏆 순위표 — 위 경기표에 점수를 입력하면 자동 집계됩니다 (승점·총득점·평균득점 순위).
+          </div>
+        );
+      }
+      const sorted = sortStandings(rows, by);
+      const TABS = [['pts', '승점'], ['pf', '총득점'], ['avg', '평균득점']];
+      return (
+        <div className="mt-4">
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+            <span className="font-display text-base text-slate-700">🏆 순위표</span>
+            <div className="flex gap-1">
+              {TABS.map(([k, label]) => (
+                <button key={k} onClick={() => setBy(k)}
+                  className={`text-[12px] font-black px-2.5 py-1 rounded-lg transition-all ${by === k ? `bg-gradient-to-r ${c.head} text-white` : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                  {label}순
+                </button>
+              ))}
+            </div>
+          </div>
+          <table className="w-full text-sm border-collapse">
+            <thead>
+              <tr className="text-[11px] uppercase tracking-wider text-slate-400 font-black border-b-2 border-slate-200">
+                <th className="text-center py-1.5 w-10">#</th>
+                <th className="text-left py-1.5 px-2">이름</th>
+                <th className="text-center py-1.5 px-1">경기</th>
+                <th className="text-center py-1.5 px-1">승-무-패</th>
+                <th className={`text-center py-1.5 px-1 ${by === 'pts' ? c.text : ''}`}>승점</th>
+                <th className={`text-center py-1.5 px-1 ${by === 'pf' ? c.text : ''}`}>총득점</th>
+                <th className={`text-center py-1.5 px-1 ${by === 'avg' ? c.text : ''}`}>평균</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((t, i) => (
+                <tr key={t.name} className="border-b border-slate-50">
+                  <td className="text-center py-2">
+                    <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[12px] font-black ${i < 3 ? `bg-gradient-to-br ${c.head} text-white` : 'text-slate-400'}`}>{i + 1}</span>
+                  </td>
+                  <td className="text-left py-2 px-2 font-bold text-slate-800">{t.name}</td>
+                  <td className="text-center py-2 px-1 text-slate-500">{t.played}</td>
+                  <td className="text-center py-2 px-1 text-slate-500 text-[12px]">{t.win}-{t.draw}-{t.loss}</td>
+                  <td className={`text-center py-2 px-1 ${by === 'pts' ? 'font-black ' + c.text : 'text-slate-700'}`}>{t.pts}</td>
+                  <td className={`text-center py-2 px-1 ${by === 'pf' ? 'font-black ' + c.text : 'text-slate-700'}`}>{t.pf}</td>
+                  <td className={`text-center py-2 px-1 ${by === 'avg' ? 'font-black ' + c.text : 'text-slate-700'}`}>{t.avg}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="text-[11px] text-slate-400 mt-1.5">승점: 승 2 · 무 1 · 패 0 / 총득점 = 본인 팀 점수 합 / 평균 = 총득점 ÷ 경기수</p>
+        </div>
+      );
+    }
+
     // ── 그룹 입력 카드 ───────────────────────────────────────
     function GroupCard({ group, index, onChange, onRemove, canRemove }) {
       const c = COLORS[group.color] || COLORS.blue;
@@ -108,9 +202,10 @@
     }
 
     // ── 라운드 표 (한 그룹) ──────────────────────────────────
-    function GroupSchedule({ group, result, options, courtLabel }) {
+    function GroupSchedule({ group, result, options, courtLabel, scores, onScore }) {
       const c = COLORS[group.color] || COLORS.blue;
       const r = result;
+      const sc = scores || {};
       if (!r) return null;
 
       return (
@@ -118,11 +213,14 @@
           <div className={`bg-gradient-to-r ${c.head} px-5 py-3 flex items-center justify-between flex-wrap gap-2`}>
             <div className="flex items-center gap-2">
               <span className="text-white font-display text-xl">{group.name}</span>
-              <span className="text-white/80 text-sm font-bold">· 라운드 로빈 복식</span>
+              <span className="text-white/80 text-sm font-bold">· KDK 복식</span>
             </div>
             <div className="flex items-center gap-2 text-white text-xs font-bold">
               <span className="bg-white/20 px-2 py-1 rounded-lg">{r.k}명</span>
               <span className="bg-white/20 px-2 py-1 rounded-lg">{r.rounds.length}라운드</span>
+              <span className="bg-white/20 px-2 py-1 rounded-lg">
+                {r.mode === 'fixed' ? '인당 ' + r.targetGames + '게임' : '인당 ' + (r.k - 1) + '게임'}
+              </span>
               {courtLabel && <span className="bg-white/25 px-2 py-1 rounded-lg">🏟 {courtLabel}</span>}
             </div>
           </div>
@@ -164,9 +262,15 @@
                       {options.score && (
                         <td className="text-center py-2 px-2">
                           <span className="inline-flex items-center gap-1">
-                            <input className="w-9 h-7 border border-slate-300 rounded text-center text-xs" placeholder="-" />
+                            <input value={(sc[rd.round] && sc[rd.round].a) || ''}
+                              onChange={e => onScore && onScore(rd.round, 'a', e.target.value)}
+                              inputMode="numeric" maxLength={3}
+                              className="w-9 h-7 border border-slate-300 rounded text-center text-xs font-bold focus:border-indigo-500 outline-none" placeholder="-" />
                             <span className="text-slate-300">:</span>
-                            <input className="w-9 h-7 border border-slate-300 rounded text-center text-xs" placeholder="-" />
+                            <input value={(sc[rd.round] && sc[rd.round].b) || ''}
+                              onChange={e => onScore && onScore(rd.round, 'b', e.target.value)}
+                              inputMode="numeric" maxLength={3}
+                              className="w-9 h-7 border border-slate-300 rounded text-center text-xs font-bold focus:border-indigo-500 outline-none" placeholder="-" />
                           </span>
                         </td>
                       )}
@@ -189,6 +293,9 @@
                   ))}
                 </div>
               </details>
+
+              {/* 순위표 (점수 입력 시) */}
+              {options.score && <StandingsTable result={r} scores={sc} color={group.color} />}
             </div>
           )}
         </div>
@@ -198,7 +305,8 @@
     // ── 메인 앱 ──────────────────────────────────────────────
     function App() {
       const [groups, setGroups] = useState(DEFAULT_GROUPS);
-      const [options, setOptions] = useState({ score: false, printMode: 'each', limitRounds: false, maxRounds: 8, seed: 2025 });
+      const [options, setOptions] = useState({ score: true, printMode: 'each', mode: 'full', gamesPerPlayer: 5, seed: 2025 });
+      const [scores, setScores] = useState({}); // { [groupId]: { [round]: {a, b} } }
       const [results, setResults] = useState(null); // [{group, result, courtLabel}]
       const firstLoad = useRef(true);
 
@@ -210,14 +318,24 @@
             const data = JSON.parse(raw);
             if (Array.isArray(data.groups) && data.groups.length) setGroups(data.groups);
             if (data.options) setOptions(o => ({ ...o, ...data.options }));
+            if (data.scores) setScores(data.scores);
           }
         } catch (e) {}
         firstLoad.current = false;
       }, []);
       useEffect(() => {
         if (firstLoad.current) return;
-        try { localStorage.setItem(LS_KEY, JSON.stringify({ groups, options })); } catch (e) {}
-      }, [groups, options]);
+        try { localStorage.setItem(LS_KEY, JSON.stringify({ groups, options, scores })); } catch (e) {}
+      }, [groups, options, scores]);
+
+      function setScore(groupId, round, side, val) {
+        const clean = String(val).replace(/[^0-9]/g, '').slice(0, 3);
+        setScores(prev => {
+          const g = prev[groupId] || {};
+          const cell = g[round] || { a: '', b: '' };
+          return { ...prev, [groupId]: { ...g, [round]: { ...cell, [side]: clean } } };
+        });
+      }
 
       function updateGroup(i, g) { setGroups(gs => gs.map((x, idx) => idx === i ? g : x)); }
       function removeGroup(i) { setGroups(gs => gs.filter((_, idx) => idx !== i)); }
@@ -227,15 +345,16 @@
       }
 
       function generate() {
-        const active = groups.filter(g => rosterToNames(g.roster).length >= 4);
         const out = groups.map((g, idx) => {
           const names = rosterToNames(g.roster);
           const result = RRD.generateGroupSchedule(names, {
             seed: options.seed + idx,                       // 그룹마다 다른 시드(상대 분포 다양화)
-            maxRounds: options.limitRounds ? options.maxRounds : undefined,
+            mode: options.mode,                             // 'full' | 'fixed'
+            gamesPerPlayer: options.gamesPerPlayer,         // 고정 모드 인당 게임수
           });
           return { group: g, result };
         });
+        setScores({});   // 새 대진 → 기존 점수 초기화
         // 코트 매핑: 동시 진행 가능 그룹을 2개씩 코트1·코트2에 배정
         const playable = out.filter(o => o.result.rounds.length > 0);
         playable.forEach((o, i) => {
@@ -277,42 +396,67 @@
 
           <div className="no-print mb-6">
             <h1 className="font-display text-2xl sm:text-3xl text-slate-900 flex items-center gap-2">
-              🎾 라운드 로빈 복식
+              🎾 KDK 방식
+              <span className="text-base font-bold text-slate-400">라운드 로빈 복식</span>
               <span className="text-[10px] font-black bg-gradient-to-br from-emerald-500 to-teal-600 text-white px-2 py-0.5 rounded uppercase tracking-wide">New</span>
             </h1>
             <p className="text-slate-500 text-sm font-medium mt-1">
               피클볼 수업용 — 그룹별로 <b>매 라운드 4명이 복식(2 vs 2)</b>, 나머지는 대기.
-              모든 학생이 서로 다른 파트너/상대와 만나도록 자동 편성합니다.
+              파트너·상대를 계속 바꿔 가며 돌리는 KDK 대진을 자동 편성합니다.
             </p>
           </div>
 
           {/* 옵션 바 */}
-          <div className="no-print bg-white rounded-2xl border border-slate-200 shadow-sm p-3 sm:p-4 mb-5 flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-sm font-bold text-slate-600 cursor-pointer">
-              <input type="checkbox" checked={options.limitRounds}
-                onChange={e => setOptions(o => ({ ...o, limitRounds: e.target.checked }))} className="w-4 h-4 accent-indigo-600" />
-              라운드 수 제한
-            </label>
-            {options.limitRounds && (
-              <input type="number" min="1" max="40" value={options.maxRounds}
-                onChange={e => setOptions(o => ({ ...o, maxRounds: Math.max(1, parseInt(e.target.value) || 1) }))}
-                className="w-16 border-2 border-slate-200 rounded-lg px-2 py-1 text-sm font-bold text-center" />
-            )}
-            <label className="flex items-center gap-2 text-sm font-bold text-slate-600 cursor-pointer">
-              <input type="checkbox" checked={options.score}
-                onChange={e => setOptions(o => ({ ...o, score: e.target.checked }))} className="w-4 h-4 accent-indigo-600" />
-              점수 입력칸 표시
-            </label>
-            <label className="flex items-center gap-2 text-sm font-bold text-slate-600 cursor-pointer">
-              인쇄:
-              <select value={options.printMode} onChange={e => setOptions(o => ({ ...o, printMode: e.target.value }))}
-                className="border-2 border-slate-200 rounded-lg px-2 py-1 text-sm font-bold">
-                <option value="each">그룹당 1장</option>
-                <option value="all">전체 이어서</option>
-              </select>
-            </label>
-            <button onClick={() => setOptions(o => ({ ...o, seed: (o.seed + 1) % 100000 }))}
-              className="text-sm font-bold text-slate-500 hover:text-indigo-600 border-2 border-slate-200 rounded-lg px-3 py-1">🎲 다른 조합</button>
+          <div className="no-print bg-white rounded-2xl border border-slate-200 shadow-sm p-3 sm:p-4 mb-5 space-y-3">
+            {/* 진행 방식 */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-black text-slate-700">진행 방식</span>
+              <div className="flex rounded-xl overflow-hidden border-2 border-slate-200">
+                <button onClick={() => setOptions(o => ({ ...o, mode: 'full' }))}
+                  className={`px-3 py-1.5 text-sm font-black transition-all ${options.mode === 'full' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                  전체 (모든 파트너 1회)
+                </button>
+                <button onClick={() => setOptions(o => ({ ...o, mode: 'fixed' }))}
+                  className={`px-3 py-1.5 text-sm font-black transition-all ${options.mode === 'fixed' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                  인당 고정 게임수
+                </button>
+              </div>
+              {options.mode === 'fixed' && (
+                <label className="flex items-center gap-1.5 text-sm font-bold text-slate-600">
+                  인당
+                  <input type="number" min="1" max="20" value={options.gamesPerPlayer}
+                    onChange={e => setOptions(o => ({ ...o, gamesPerPlayer: Math.max(1, parseInt(e.target.value) || 1) }))}
+                    className="w-14 border-2 border-slate-200 rounded-lg px-2 py-1 text-sm font-black text-center" />
+                  게임
+                </label>
+              )}
+              <span className="text-[12px] text-slate-400 font-medium">
+                {options.mode === 'full'
+                  ? '시간이 충분할 때 — 모든 학생이 서로 1회씩 파트너'
+                  : '시간이 부족할 때 — 각자 정해진 게임수만 (파트너 최대한 다양)'}
+              </span>
+            </div>
+
+            <div className="border-t border-slate-100" />
+
+            {/* 표시/인쇄 옵션 */}
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-2 text-sm font-bold text-slate-600 cursor-pointer">
+                <input type="checkbox" checked={options.score}
+                  onChange={e => setOptions(o => ({ ...o, score: e.target.checked }))} className="w-4 h-4 accent-indigo-600" />
+                점수 입력칸 + 순위표
+              </label>
+              <label className="flex items-center gap-2 text-sm font-bold text-slate-600 cursor-pointer">
+                인쇄:
+                <select value={options.printMode} onChange={e => setOptions(o => ({ ...o, printMode: e.target.value }))}
+                  className="border-2 border-slate-200 rounded-lg px-2 py-1 text-sm font-bold">
+                  <option value="each">그룹당 1장</option>
+                  <option value="all">전체 이어서</option>
+                </select>
+              </label>
+              <button onClick={() => setOptions(o => ({ ...o, seed: (o.seed + 1) % 100000 }))}
+                className="text-sm font-bold text-slate-500 hover:text-indigo-600 border-2 border-slate-200 rounded-lg px-3 py-1">🎲 다른 조합</button>
+            </div>
           </div>
 
           {/* 그룹 입력 */}
@@ -367,11 +511,14 @@
 
               {results.map(o => (
                 <GroupSchedule key={o.group.id} group={o.group} result={o.result}
-                  options={options} courtLabel={o.courtLabel} />
+                  options={options} courtLabel={o.courtLabel}
+                  scores={scores[o.group.id] || {}}
+                  onScore={(round, side, val) => setScore(o.group.id, round, side, val)} />
               ))}
 
               <div className="no-print text-center text-[12px] text-slate-400 font-medium py-6">
-                MatchMaker Pro · Round Robin Doubles — 알고리즘 검증됨(모든 파트너 1회 보장, N≡0·1 mod4)
+                MatchMaker Pro · KDK 방식 (라운드 로빈 복식) — 알고리즘 검증됨
+                {options.mode === 'fixed' ? ' · 인당 ' + options.gamesPerPlayer + '게임 고정' : ' · 모든 파트너 1회'}
               </div>
             </div>
           )}

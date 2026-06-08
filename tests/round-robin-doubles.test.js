@@ -98,10 +98,59 @@ for (const k of [4, 5, 6, 7, 8, 9, 10, 11, 12, 16]) {
   check(empty.rounds.length === 0, '[k=0] 빈 입력 안전 처리');
 })();
 
-// maxRounds 제한 동작
+// ── KDK 고정 게임수 모드 검증 ─────────────────────────────────
+function verifyFixed(k, target) {
+  const names = Array.from({ length: k }, (_, i) => 'P' + (i + 1));
+  const res = RRD.generateGroupSchedule(names, { seed: 999, mode: 'fixed', gamesPerPlayer: target });
+  const tag = `[fixed k=${k} g=${target}]`;
+
+  // 라운드 구조 정상(4명 경기 + 나머지 대기)
+  let structOk = true;
+  res.rounds.forEach(r => {
+    const playing = [...r.teamA, ...r.teamB];
+    const all = new Set([...playing, ...r.waiting]);
+    if (new Set(playing).size !== 4 || all.size !== k) structOk = false;
+  });
+  check(structOk, `${tag} 라운드 구조 정상`);
+
+  // 출전수: 모두 target 이하 + 최대-최소 차 ≤ 1 (균등)
+  const g = res.perPlayer.map(p => p.games);
+  const maxG = Math.max(...g), minG = Math.min(...g);
+  check(maxG <= target, `${tag} 아무도 목표(${target})를 초과하지 않음 (최대 ${maxG})`);
+  check(maxG - minG <= 1, `${tag} 출전수 균등(차 ${maxG - minG} ≤ 1)`);
+
+  // k*target 이 4의 배수면 전원 정확히 target
+  if ((k * target) % 4 === 0) {
+    check(g.every(x => x === target), `${tag} 전원 정확히 ${target}게임 (4의 배수)`);
+  }
+
+  // 총 라운드 = 총 출전수/4
+  const totalPlayerGames = g.reduce((a, b) => a + b, 0);
+  check(res.rounds.length === totalPlayerGames / 4, `${tag} 라운드수=총출전/4 정합`);
+
+  // 파트너 중복: 이론상 중복 없이 가능하면(사용쌍 ≤ C(k,2)) 중복 0이어야 함
+  const usedPairs = res.rounds.length * 2;       // 게임당 2팀
+  if (usedPairs <= k * (k - 1) / 2) {
+    check(res.coverage.repeatedPartners === 0,
+      `${tag} 파트너 중복 0 (사용쌍 ${usedPairs} ≤ C(k,2) ${k * (k - 1) / 2}, 실제 중복 ${res.coverage.repeatedPartners})`);
+  }
+  return res;
+}
+
+// 4의 배수로 떨어지는 케이스(전원 정확히 target)
+verifyFixed(8, 5);   // 40/4=10R, 전원 5게임
+verifyFixed(7, 4);   // 28/4=7R, 전원 4게임
+verifyFixed(8, 3);   // 24/4=6R, 전원 3게임
+verifyFixed(12, 5);  // 60/4=15R
+// 안 떨어지는 케이스(±1 균등)
+verifyFixed(7, 5);
+verifyFixed(6, 5);
+verifyFixed(8, 7);   // = 전체 풀리그와 동일 게임수
+
+// 목표가 k-1 이상으로 잘리는지(상한)
 (() => {
-  const res = RRD.generateGroupSchedule(Array.from({ length: 8 }, (_, i) => 'S' + i), { seed: 7, maxRounds: 5 });
-  check(res.rounds.length === 5, '[maxRounds] 라운드 5개로 제한됨 (실제 ' + res.rounds.length + ')');
+  const res = RRD.generateGroupSchedule(Array.from({ length: 5 }, (_, i) => 'Q' + i), { seed: 3, mode: 'fixed', gamesPerPlayer: 99 });
+  check(res.targetGames === 4, '[fixed clamp] 목표 게임수 k-1로 상한 (실제 ' + res.targetGames + ')');
 })();
 
 // 이름 공백/중복-trim 처리

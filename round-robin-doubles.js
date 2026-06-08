@@ -42,6 +42,23 @@
 
   function pairKey(i, j) { return i < j ? i + '-' + j : j + '-' + i; }
 
+  // arr 에서 kk개 조합 모두 (작은 입력 전용)
+  function kCombinations(arr, kk) {
+    const res = [];
+    if (kk > arr.length || kk < 0) return res;
+    if (kk === 0) return [[]];
+    const idx = Array.from({ length: kk }, (_, i) => i);
+    while (true) {
+      res.push(idx.map(i => arr[i]));
+      let i = kk - 1;
+      while (i >= 0 && idx[i] === arr.length - kk + i) i--;
+      if (i < 0) break;
+      idx[i]++;
+      for (let j = i + 1; j < kk; j++) idx[j] = idx[j - 1] + 1;
+    }
+    return res;
+  }
+
   // ── 1) 파트너쌍 → 게임(서로소 쌍 2개) 최대 매칭 백트래킹 ──────
   //  players: 인덱스 0..k-1. 반환: [{ a:[i,j], b:[p,q] }, ...]  (a,b = 두 팀의 인덱스쌍)
   function buildGames(k, seed) {
@@ -160,11 +177,114 @@
     return ordered;
   }
 
+  // ── 3) KDK 고정 게임수 모드 ──────────────────────────────────
+  //  각 선수가 정확히(또는 ±1) target 게임만 뛰도록 그리디 생성.
+  //  매 라운드 "가장 적게 뛴 4명"을 출전 → 출전수 자동 균등(차이 ≤1),
+  //  팀 편성은 파트너 중복 최소 → 상대 중복 최소 순으로 선택.
+  //  시간 제약 시 전체 풀리그(k-1게임) 대신 짧게 끊어 쓰는 KDK 관행에 대응.
+  function countPartnerRepeats(games) {
+    const m = {}; let rep = 0;
+    for (const g of games) for (const e of [g.a, g.b]) {
+      const key = pairKey(e[0], e[1]);
+      m[key] = (m[key] || 0) + 1;
+      if (m[key] === 2) rep++;
+    }
+    return rep;
+  }
+
+  // 무작위 재시작으로 파트너 중복이 가장 적은 스케줄 선택(중복 0이면 즉시 종료)
+  function buildFixedGames(k, target, seed) {
+    let best = null, bestRep = Infinity;
+    for (let t = 0; t < 80; t++) {
+      const r = buildFixedGamesOnce(k, target, (seed || 0) + t * 7919);
+      const rep = countPartnerRepeats(r.games);
+      if (rep < bestRep) { bestRep = rep; best = r; if (rep === 0) break; }
+    }
+    return best;
+  }
+
+  function buildFixedGamesOnce(k, target, seed) {
+    const rand = mulberry32((seed || 0) ^ 0x5bd1e995);
+    target = Math.max(1, Math.min(target, k - 1));
+
+    const plays = new Array(k).fill(0);
+    const partner = Array.from({ length: k }, () => new Array(k).fill(0));
+    const opp = Array.from({ length: k }, () => new Array(k).fill(0));
+    const byeStreak = new Array(k).fill(0);
+    const games = [];
+
+    // 4명을 2팀으로 나누는 3분할 중 파트너중복(↑가중)→상대중복 최소 선택
+    function bestSplit(four) {
+      const [w, x, y, z] = four;
+      const splits = [
+        { A: [w, x], B: [y, z] },
+        { A: [w, y], B: [x, z] },
+        { A: [w, z], B: [x, y] },
+      ];
+      let best = splits[0], score = Infinity;
+      for (const s of splits) {
+        const pr = partner[s.A[0]][s.A[1]] + partner[s.B[0]][s.B[1]];
+        const op = opp[s.A[0]][s.B[0]] + opp[s.A[0]][s.B[1]] + opp[s.A[1]][s.B[0]] + opp[s.A[1]][s.B[1]];
+        const sc = pr * 1000 + op;
+        if (sc < score) { score = sc; best = s; }
+      }
+      return { split: best, score };
+    }
+
+    let guard = 0;
+    const GUARD_CAP = k * target * 4 + 50;
+    while (guard++ < GUARD_CAP) {
+      // 아직 target 미달인 선수들
+      const need = [];
+      for (let i = 0; i < k; i++) if (plays[i] < target) need.push(i);
+      if (need.length < 4) break;   // 4명을 못 채우면 종료(잔여는 target-1)
+
+      // 출전수 균등 유지: plays asc → byeStreak desc → 무작위
+      need.sort((a, b) => {
+        if (plays[a] !== plays[b]) return plays[a] - plays[b];
+        if (byeStreak[a] !== byeStreak[b]) return byeStreak[b] - byeStreak[a];
+        return rand() - 0.5;
+      });
+      // 4번째로 적게 뛴 값이 임계. 그보다 적게 뛴 선수는 반드시 포함(균등 보장),
+      // 임계 동률 선수들 중에서 파트너 중복이 가장 적은 조합을 선택.
+      const threshold = plays[need[3]];
+      const below = need.filter(p => plays[p] < threshold);     // ≤3명
+      const atTh = need.filter(p => plays[p] === threshold);
+      const slots = 4 - below.length;
+
+      let bestFour = null, bestSp = null, bestScore = Infinity;
+      const combos = kCombinations(atTh, slots);
+      for (const combo of combos) {
+        const four = below.concat(combo);
+        const { split, score } = bestSplit(four);
+        const jit = score + rand() * 0.01;
+        if (jit < bestScore) { bestScore = jit; bestFour = four; bestSp = split; }
+      }
+      if (!bestFour) { bestFour = need.slice(0, 4); bestSp = bestSplit(bestFour).split; }
+
+      games.push({ a: bestSp.A, b: bestSp.B });
+      const playing = [...bestSp.A, ...bestSp.B];
+      playing.forEach(p => plays[p]++);
+      partner[bestSp.A[0]][bestSp.A[1]]++; partner[bestSp.A[1]][bestSp.A[0]]++;
+      partner[bestSp.B[0]][bestSp.B[1]]++; partner[bestSp.B[1]][bestSp.B[0]]++;
+      bestSp.A.forEach(p => bestSp.B.forEach(q => { opp[p][q]++; opp[q][p]++; }));
+      const playingSet = new Set(playing);
+      for (let i = 0; i < k; i++) byeStreak[i] = playingSet.has(i) ? 0 : byeStreak[i] + 1;
+    }
+    return { games, target };
+  }
+
   // ── 공개 API ─────────────────────────────────────────────────
-  //  names: 학생 이름 배열. options: { seed, maxRounds }
+  //  names: 학생 이름 배열.
+  //  options: {
+  //    seed,                               결정적 시드
+  //    mode: 'full' | 'fixed',             'full'=모든 파트너 1회, 'fixed'=인당 고정 게임수
+  //    gamesPerPlayer,                     mode='fixed'일 때 인당 목표 게임수
+  //  }
   //  반환: {
   //    rounds: [{ round, teamA:[n,n], teamB:[n,n], waiting:[n...] }],
-  //    coverage: { totalPairs, coveredPairs, missingPairs:[[n,n]...], fullyCovered },
+  //    mode, targetGames,
+  //    coverage: { totalPairs, coveredPairs, missingPairs:[[n,n]...], fullyCovered, repeatedPartners },
   //    perPlayer: [{ name, games, byes, partners:[...], opponents:[...] }],
   //    warnings: [..]
   //  }
@@ -183,25 +303,33 @@
       };
     }
 
-    const { games, totalPairs } = buildGames(k, options.seed);
-    let ordered = orderRounds(games, k);
-
-    // 라운드 수 제한 옵션
-    if (options.maxRounds && ordered.length > options.maxRounds) {
-      warnings.push('라운드를 ' + options.maxRounds + '개로 제한했습니다 (전체 ' + ordered.length + '라운드 중). 일부 파트너 조합이 빠질 수 있습니다.');
-      ordered = ordered.slice(0, options.maxRounds);
+    // mode: 'full'(모든 파트너 1회) | 'fixed'(인당 고정 게임수)
+    const mode = options.mode === 'fixed' ? 'fixed' : 'full';
+    const totalPairs = k * (k - 1) / 2;
+    let games, targetGames = null;
+    if (mode === 'fixed') {
+      const t = Math.max(1, Math.min(options.gamesPerPlayer || 5, k - 1));
+      targetGames = t;
+      games = buildFixedGames(k, t, options.seed).games;
+    } else {
+      games = buildGames(k, options.seed).games;
     }
+    let ordered = orderRounds(games, k);
 
     // 커버리지/통계 계산
     const coveredSet = new Set();
+    const partnerPairCount = {};      // 파트너쌍별 사용 횟수(고정 모드 중복 점검)
     const partnersOf = Array.from({ length: k }, () => new Set());
     const opponentsOf = Array.from({ length: k }, () => new Set());
     const gamesOf = new Array(k).fill(0);
 
     ordered.forEach(r => {
       const [a1, a2] = r.teamA, [b1, b2] = r.teamB;
-      coveredSet.add(pairKey(a1, a2));
-      coveredSet.add(pairKey(b1, b2));
+      [[a1, a2], [b1, b2]].forEach(([x, y]) => {
+        const key = pairKey(x, y);
+        coveredSet.add(key);
+        partnerPairCount[key] = (partnerPairCount[key] || 0) + 1;
+      });
       partnersOf[a1].add(a2); partnersOf[a2].add(a1);
       partnersOf[b1].add(b2); partnersOf[b2].add(b1);
       [a1, a2].forEach(x => [b1, b2].forEach(y => { opponentsOf[x].add(y); opponentsOf[y].add(x); }));
@@ -214,7 +342,21 @@
         if (!coveredSet.has(pairKey(i, j))) missingPairs.push([clean[i], clean[j]]);
 
     const fullyCovered = missingPairs.length === 0;
-    if (!fullyCovered && !options.maxRounds) {
+    const repeatedPartners = Object.values(partnerPairCount).filter(c => c > 1).length;
+
+    if (mode === 'fixed') {
+      const minG = Math.min(...gamesOf), maxG = Math.max(...gamesOf);
+      if (minG < targetGames) {
+        const shortCount = gamesOf.filter(g => g < targetGames).length;
+        warnings.push(
+          '인당 ' + targetGames + '게임 목표 중 ' + shortCount + '명은 인원 구성상 ' + minG +
+          '게임으로 배정되었습니다(나머지는 ' + maxG + '게임). 출전수 차이는 1게임 이내로 균등합니다.'
+        );
+      }
+      if (repeatedPartners > 0) {
+        warnings.push('고정 게임수 모드라 ' + repeatedPartners + '개 파트너 조합이 중복됩니다(같은 파트너를 다시 만남). 게임수를 줄이면 중복이 사라집니다.');
+      }
+    } else if (!fullyCovered) {
       warnings.push(
         missingPairs.length + '개 파트너 조합은 ' + k +
         '명 구성상 한 게임으로 편성할 수 없습니다 (수학적으로 ' +
@@ -240,14 +382,16 @@
 
     return {
       rounds,
-      coverage: { totalPairs, coveredPairs: coveredSet.size, missingPairs, fullyCovered },
+      mode,
+      targetGames,
+      coverage: { totalPairs, coveredPairs: coveredSet.size, missingPairs, fullyCovered, repeatedPartners },
       perPlayer,
       warnings,
       k,
     };
   }
 
-  const api = { generateGroupSchedule, buildGames, orderRounds, pairKey, mulberry32 };
+  const api = { generateGroupSchedule, buildGames, buildFixedGames, orderRounds, pairKey, mulberry32 };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.RoundRobinDoubles = api;
