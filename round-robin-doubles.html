@@ -1,0 +1,1304 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KDK 방식 — 라운드 로빈 복식 · MatchMaker Pro</title>
+  <meta name="description" content="피클볼 수업용 KDK 방식(라운드 로빈 복식) 로테이션 자동 생성기" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icons/favicon-64.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;500;700;900&display=swap');
+    body { font-family: 'Noto Sans KR', system-ui, sans-serif; }
+    .font-display { font-family: 'Black Han Sans', 'Noto Sans KR', sans-serif; }
+    /* ── 인쇄 ── */
+    @media print {
+      .no-print { display: none !important; }
+      body { background: #fff !important; }
+      .print-area { box-shadow: none !important; }
+      .group-page { break-inside: avoid; page-break-inside: avoid; }
+      .group-page.page-each { break-after: page; page-break-after: always; }
+      .group-page.page-each:last-child { break-after: auto; page-break-after: auto; }
+    }
+  </style>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-800">
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- 순수 알고리즘 (Node 테스트와 공유) -->
+  <script src="round-robin-doubles.js"></script>
+
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useRef } = React;
+    const RRD = window.RoundRobinDoubles;
+    const LS_KEY = 'mmpro_rr_doubles_v1';
+
+    // 기본 그룹 (수업 맥락: 여자2·남자2 그룹)
+    const DEFAULT_GROUPS = [
+      { id: 'g1', name: '여자 1조', color: 'rose',    roster: '' },
+      { id: 'g2', name: '여자 2조', color: 'pink',    roster: '' },
+      { id: 'g3', name: '남자 1조', color: 'blue',    roster: '' },
+      { id: 'g4', name: '남자 2조', color: 'indigo',  roster: '' },
+    ];
+
+    const COLORS = {
+      rose:   { head: 'from-rose-500 to-rose-600',     soft: 'bg-rose-50 border-rose-200',     text: 'text-rose-700',   ring: 'focus:border-rose-500' },
+      pink:   { head: 'from-pink-500 to-fuchsia-600',  soft: 'bg-pink-50 border-pink-200',     text: 'text-pink-700',   ring: 'focus:border-pink-500' },
+      blue:   { head: 'from-blue-500 to-blue-600',     soft: 'bg-blue-50 border-blue-200',     text: 'text-blue-700',   ring: 'focus:border-blue-500' },
+      indigo: { head: 'from-indigo-500 to-violet-600', soft: 'bg-indigo-50 border-indigo-200', text: 'text-indigo-700', ring: 'focus:border-indigo-500' },
+      teal:   { head: 'from-teal-500 to-emerald-600',  soft: 'bg-teal-50 border-teal-200',     text: 'text-teal-700',   ring: 'focus:border-teal-500' },
+      amber:  { head: 'from-amber-500 to-orange-600',  soft: 'bg-amber-50 border-amber-200',   text: 'text-amber-700',  ring: 'focus:border-amber-500' },
+    };
+    const COLOR_CYCLE = ['rose','pink','blue','indigo','teal','amber'];
+
+    function rosterToNames(roster) {
+      return (roster || '')
+        .split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+    }
+
+    // ── 점수 → 개인 순위 통계 (KDK: 본인 팀 점수를 개인 득점으로 합산) ──
+    //  승점: 승 2 · 무 1 · 패 0
+    function computeStandings(result, groupScores) {
+      const stat = {};
+      result.perPlayer.forEach(p => { stat[p.name] = { name: p.name, played: 0, win: 0, draw: 0, loss: 0, pts: 0, pf: 0 }; });
+      let entered = 0;
+      result.rounds.forEach(rd => {
+        const s = groupScores && groupScores[rd.round];
+        if (!s) return;
+        const a = parseInt(s.a, 10), b = parseInt(s.b, 10);
+        if (isNaN(a) || isNaN(b)) return;
+        entered++;
+        const apply = (names, my, opp) => names.forEach(n => {
+          const t = stat[n]; if (!t) return;
+          t.played++; t.pf += my;
+          if (my > opp) { t.win++; t.pts += 2; }
+          else if (my < opp) { t.loss++; }
+          else { t.draw++; t.pts += 1; }
+        });
+        apply(rd.teamA, a, b);
+        apply(rd.teamB, b, a);
+      });
+      const rows = Object.values(stat).map(t => ({ ...t, avg: t.played ? +(t.pf / t.played).toFixed(2) : 0 }));
+      return { rows, entered };
+    }
+
+    function sortStandings(rows, by) {
+      const r = rows.slice();
+      if (by === 'pf') r.sort((a, b) => b.pf - a.pf || b.pts - a.pts || b.avg - a.avg || a.name.localeCompare(b.name));
+      else if (by === 'avg') r.sort((a, b) => b.avg - a.avg || b.pts - a.pts || b.pf - a.pf || a.name.localeCompare(b.name));
+      else r.sort((a, b) => b.pts - a.pts || b.avg - a.avg || b.pf - a.pf || a.name.localeCompare(b.name));
+      return r;
+    }
+
+    // ── 순위표 (승점 / 총득점 / 평균득점 정렬) ────────────────
+    function StandingsTable({ result, scores, color }) {
+      const c = COLORS[color] || COLORS.blue;
+      const [by, setBy] = useState('pts');
+      const { rows, entered } = computeStandings(result, scores);
+      if (entered === 0) {
+        return (
+          <div className="mt-3 text-[12px] text-slate-400 font-bold bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+            🏆 순위표 — 위 경기표에 점수를 입력하면 자동 집계됩니다 (승점·총득점·평균득점 순위).
+          </div>
+        );
+      }
+      const sorted = sortStandings(rows, by);
+      const TABS = [['pts', '승점'], ['pf', '총득점'], ['avg', '평균득점']];
+      return (
+        <div className="mt-4">
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+            <span className="font-display text-base text-slate-700">🏆 순위표</span>
+            <div className="flex gap-1">
+              {TABS.map(([k, label]) => (
+                <button key={k} onClick={() => setBy(k)}
+                  className={`text-[12px] font-black px-2.5 py-1 rounded-lg transition-all ${by === k ? `bg-gradient-to-r ${c.head} text-white` : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                  {label}순
+                </button>
+              ))}
+            </div>
+          </div>
+          <table className="w-full text-sm border-collapse">
+            <thead>
+              <tr className="text-[11px] uppercase tracking-wider text-slate-400 font-black border-b-2 border-slate-200">
+                <th className="text-center py-1.5 w-10">#</th>
+                <th className="text-left py-1.5 px-2">이름</th>
+                <th className="text-center py-1.5 px-1">경기</th>
+                <th className="text-center py-1.5 px-1">승-무-패</th>
+                <th className={`text-center py-1.5 px-1 ${by === 'pts' ? c.text : ''}`}>승점</th>
+                <th className={`text-center py-1.5 px-1 ${by === 'pf' ? c.text : ''}`}>총득점</th>
+                <th className={`text-center py-1.5 px-1 ${by === 'avg' ? c.text : ''}`}>평균</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((t, i) => (
+                <tr key={t.name} className="border-b border-slate-50">
+                  <td className="text-center py-2">
+                    <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[12px] font-black ${i < 3 ? `bg-gradient-to-br ${c.head} text-white` : 'text-slate-400'}`}>{i + 1}</span>
+                  </td>
+                  <td className="text-left py-2 px-2 font-bold text-slate-800">{t.name}</td>
+                  <td className="text-center py-2 px-1 text-slate-500">{t.played}</td>
+                  <td className="text-center py-2 px-1 text-slate-500 text-[12px]">{t.win}-{t.draw}-{t.loss}</td>
+                  <td className={`text-center py-2 px-1 ${by === 'pts' ? 'font-black ' + c.text : 'text-slate-700'}`}>{t.pts}</td>
+                  <td className={`text-center py-2 px-1 ${by === 'pf' ? 'font-black ' + c.text : 'text-slate-700'}`}>{t.pf}</td>
+                  <td className={`text-center py-2 px-1 ${by === 'avg' ? 'font-black ' + c.text : 'text-slate-700'}`}>{t.avg}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="text-[11px] text-slate-400 mt-1.5">승점: 승 2 · 무 1 · 패 0 / 총득점 = 본인 팀 점수 합 / 평균 = 총득점 ÷ 경기수</p>
+        </div>
+      );
+    }
+
+    // ── 그룹 입력 카드 ───────────────────────────────────────
+    function GroupCard({ group, index, onChange, onRemove, canRemove }) {
+      const c = COLORS[group.color] || COLORS.blue;
+      const count = rosterToNames(group.roster).length;
+      return (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className={`bg-gradient-to-r ${c.head} px-4 py-2.5 flex items-center gap-2`}>
+            <span className="text-white/80 font-black text-sm">조 {index + 1}</span>
+            <input
+              value={group.name}
+              onChange={e => onChange({ ...group, name: e.target.value })}
+              className="flex-1 bg-white/20 text-white placeholder-white/60 font-black px-3 py-1 rounded-lg outline-none focus:bg-white/30"
+              placeholder="그룹명"
+            />
+            <span className="text-white font-black text-xs bg-white/20 px-2 py-0.5 rounded-full">{count}명</span>
+            {canRemove && (
+              <button onClick={onRemove} title="그룹 삭제"
+                className="text-white/80 hover:text-white hover:bg-white/20 w-7 h-7 rounded-full font-black">✕</button>
+            )}
+          </div>
+          <div className="p-3">
+            <textarea
+              value={group.roster}
+              onChange={e => onChange({ ...group, roster: e.target.value })}
+              rows={6}
+              placeholder={"학생 이름을 한 줄에 한 명씩 입력\n예)\n김민준\n이서연\n박도윤\n..."}
+              className={`w-full text-sm border-2 border-slate-200 rounded-xl px-3 py-2 outline-none resize-y ${c.ring}`}
+            />
+            <div className="flex items-center justify-between mt-1.5">
+              <span className={`text-[11px] font-bold ${count < 4 ? 'text-red-500' : count > 8 ? 'text-amber-600' : c.text}`}>
+                {count < 4 ? `⚠ 최소 4명 필요 (현재 ${count}명)` :
+                 count > 8 ? `${count}명 — 권장 7~8명, 라운드가 많아집니다` :
+                 `${count}명 · 권장 인원`}
+              </span>
+              <div className="flex gap-1">
+                {COLOR_CYCLE.map(col => (
+                  <button key={col} onClick={() => onChange({ ...group, color: col })}
+                    className={`w-4 h-4 rounded-full bg-gradient-to-br ${COLORS[col].head} ${group.color === col ? 'ring-2 ring-offset-1 ring-slate-400' : ''}`} />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── 영어 음성 콜 (메인 앱 방식 차용) ────────────────────
+    let _enVoice = null, _voicesReady = false;
+    function refreshVoices() {
+      try {
+        const vs = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+        if (vs && vs.length) {
+          _enVoice = vs.find(v => /en[-_]US/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null;
+          _voicesReady = true;
+        }
+      } catch (e) {}
+    }
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      refreshVoices();
+      try { window.speechSynthesis.onvoiceschanged = refreshVoices; } catch (e) {}
+    }
+    function speakEnglish(text) {
+      try {
+        const synth = window.speechSynthesis;
+        if (!synth || !text) return;
+        if (!_voicesReady) refreshVoices();
+        synth.cancel();
+        const u = new SpeechSynthesisUtterance(String(text));
+        u.lang = 'en-US';
+        if (_enVoice) u.voice = _enVoice;
+        u.rate = 1.0; u.pitch = 1.0; u.volume = 1.0;
+        synth.speak(u);
+      } catch (e) {}
+    }
+
+    // ════════ 메인 앱 스코어보드 이식 (피클볼: 11점 랠리·서브표시·영어 음성콜) ════════
+    // index.html 의 ScoreboardView + 의존부 복사. 저장만 KDK 라운드 콜백으로 교체.
+    // ── 종목 상수(피클볼 포함) ──
+    const SPORTS_LIST = [
+      { id: 'pickleball',  name: '피클볼',   icon: '🥒' },
+      { id: 'badminton',   name: '배드민턴', icon: '🏸' },
+      { id: 'volleyball',  name: '배구',     icon: '🏐' },
+      { id: 'tabletennis', name: '탁구',     icon: '🏓' },
+      { id: 'tennis',      name: '테니스',   icon: '🎾' },
+    ];
+    const SETS_SPORTS = ['pickleball', 'badminton', 'tennis', 'tabletennis', 'volleyball'];
+    const isSetsGame = (sport) => SETS_SPORTS.includes(sport);
+    const isTennis   = (sport) => sport === 'tennis';
+
+    const TENNIS_POINTS = [0, 15, 30, 40];
+    const ptDisplay = (p, isAd) => isAd ? 'AD' : (p<=3 ? TENNIS_POINTS[p] : 40);
+
+    // 한 포인트 후의 상태 계산
+    // state: {gA, gB, pA, pB, isDeuce, advA, advB, isTiebreak, tbA, tbB}
+    // settings: {gamesPerSet, deuce: true=듀스, false=노애드, tiebreak: true, isFinalSet: boolean}
+    // scorer: 'A' or 'B'
+    function tennisScorePoint(state, settings, scorer) {
+      const next = {...state};
+      const {gamesPerSet, deuce, tiebreak, isFinalSet} = settings;
+
+      // 1. 타이브레이크 진행 중
+      if(next.isTiebreak){
+        if(scorer==='A') next.tbA++; else next.tbB++;
+        // 마지막 세트 매치 타이브레이크면 10점, 일반은 7점
+        const tbTarget = isFinalSet ? 10 : 7;
+        const tbA = next.tbA, tbB = next.tbB;
+        if(tbA >= tbTarget && tbA - tbB >= 2){
+          // A 타이브레이크 승
+          next.gA++; next.tbA = 0; next.tbB = 0; next.isTiebreak = false;
+          return endGame(next, settings);
+        }
+        if(tbB >= tbTarget && tbB - tbA >= 2){
+          next.gB++; next.tbA = 0; next.tbB = 0; next.isTiebreak = false;
+          return endGame(next, settings);
+        }
+        return next;
+      }
+
+      // 2. 듀스 모드 (40-40)
+      if(next.isDeuce){
+        if(deuce){
+          // 어드밴티지 룰
+          if(scorer==='A'){
+            if(next.advB){ next.advB=false; } // B 어드 → 듀스로 복귀
+            else if(next.advA){ // A가 어드 + A 득점 → 게임승
+              next.advA=false; next.isDeuce=false; next.pA=0; next.pB=0;
+              next.gA++;
+              return endGame(next, settings);
+            }
+            else { next.advA=true; }
+          } else {
+            if(next.advA){ next.advA=false; }
+            else if(next.advB){
+              next.advB=false; next.isDeuce=false; next.pA=0; next.pB=0;
+              next.gB++;
+              return endGame(next, settings);
+            }
+            else { next.advB=true; }
+          }
+        } else {
+          // 노애드 — 다음 1점 따는 사람이 게임 가져감
+          next.isDeuce=false; next.pA=0; next.pB=0;
+          if(scorer==='A') next.gA++; else next.gB++;
+          return endGame(next, settings);
+        }
+        return next;
+      }
+
+      // 3. 일반 포인트
+      if(scorer==='A') next.pA++; else next.pB++;
+
+      // 3-1. 40-40 진입 → 듀스
+      if(next.pA===3 && next.pB===3){
+        next.isDeuce = true;
+        return next;
+      }
+      // 3-2. 누군가 40 이상이고 상대보다 2점 차이면 게임승
+      if(next.pA>=4 && next.pA - next.pB >= 2){
+        next.pA=0; next.pB=0; next.gA++;
+        return endGame(next, settings);
+      }
+      if(next.pB>=4 && next.pB - next.pA >= 2){
+        next.pA=0; next.pB=0; next.gB++;
+        return endGame(next, settings);
+      }
+      return next;
+    }
+
+    // 게임 종료 후 세트/타이브레이크 진입 여부 판단
+    function endGame(state, settings){
+      const {gamesPerSet, tiebreak, isFinalSet} = settings;
+      const {gA, gB} = state;
+
+      // 마지막 세트 매치 타이브레이크 모드 — gamesPerSet 무시, 10점 매치 타이브레이크
+      // (3판2선승의 3세트 또는 5판3선승의 5세트가 1-1 또는 2-2일 때)
+
+      // 일반 세트 종료
+      // 6게임 선승: 6-0~6-4 = 세트승, 5-5 → 7게임선승(6-5는 계속), 6-6 → 타이브레이크
+      const target = gamesPerSet;
+
+      if(gA === target && gB <= target - 2){
+        // 6-0 ~ 6-4 처럼 깔끔한 승
+        return endSet(state, 'A');
+      }
+      if(gB === target && gA <= target - 2){
+        return endSet(state, 'B');
+      }
+      // 5-5 상황: 한 게임 더 이어가서 7-5면 종료
+      if(gA === target + 1 && gB <= target - 1){
+        // 7-5
+        return endSet(state, 'A');
+      }
+      if(gB === target + 1 && gA <= target - 1){
+        return endSet(state, 'B');
+      }
+      // 6-6 또는 4-4 (4게임 선승의 경우) → 타이브레이크
+      if(tiebreak && gA === target && gB === target){
+        state.isTiebreak = true;
+        state.tbA = 0; state.tbB = 0;
+      }
+      return state;
+    }
+
+    // 세트 종료 처리
+    function endSet(state, winner){
+      if(winner==='A') state.sA++; else state.sB++;
+      state.gA = 0; state.gB = 0;
+      state.pA = 0; state.pB = 0;
+      state.advA = false; state.advB = false;
+      state.isDeuce = false;
+      state.isTiebreak = false;
+      state.tbA = 0; state.tbB = 0;
+      // 세트 히스토리 기록
+      if(!state.setHistory) state.setHistory = [];
+      // 마지막 세트 점수 (직전 게임 결과)
+      return state;
+    }
+
+    // 초기 테니스 상태
+    function initTennisState(){
+      return {
+        sA:0, sB:0,                    // 매치 세트 스코어
+        gA:0, gB:0,                    // 현재 세트 게임 스코어
+        pA:0, pB:0,                    // 현재 게임 포인트 (0~3 → 0/15/30/40)
+        advA:false, advB:false,        // 어드밴티지 보유 여부
+        isDeuce:false,                 // 듀스 상태
+        isTiebreak:false,              // 타이브레이크 진행 중
+        tbA:0, tbB:0,                  // 타이브레이크 점수
+        setHistory:[]                  // [{gA, gB}, ...] 완료된 세트 게임수
+      };
+    }
+
+    const TENNIS_CALL = ['love','fifteen','thirty','forty'];
+    // 일반 숫자 → 영어 단어 (0~99)
+    const ONES = ['zero','one','two','three','four','five','six','seven','eight','nine','ten',
+                  'eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen'];
+    const TENS = ['','','twenty','thirty','forty','fifty','sixty','seventy','eighty','ninety'];
+    function numWords(n){
+      n = Math.max(0, Math.floor(Number(n)||0));
+      if(n < 20) return ONES[n];
+      if(n < 100){ const t=Math.floor(n/10), o=n%10; return o ? TENS[t]+'-'+ONES[o] : TENS[t]; }
+      return String(n);
+    }
+
+    const VOICE_PREF_KEY = 'mm_scoreboard_voice';
+
+    // 🎾 서브권 계산 — 첫 서브(firstServer) 기준, 게임마다 교대.
+    //   타이브레이크는 첫 1포인트 후 2포인트씩 교대(정석 룰).
+    const otherSide = s => s==='A' ? 'B' : 'A';
+    function currentServerSide(state, firstServer){
+      if(!firstServer || firstServer==='skip' || !state) return null;
+      // 지금까지 완료된 총 게임 수 (이전 세트 + 현재 세트). 타이브레이크도 1게임으로 계산됨.
+      const done = (state.setHistory||[]).reduce((s,h)=>s+(h.gA||0)+(h.gB||0),0) + state.gA + state.gB;
+      const gameServer = (done % 2 === 0) ? firstServer : otherSide(firstServer);
+      if(state.isTiebreak){
+        const pts = (state.tbA||0) + (state.tbB||0);   // 지금 칠 포인트의 인덱스
+        const flipped = Math.floor((pts+1)/2) % 2 === 1; // 1-2-2-2… 교대
+        return flipped ? otherSide(gameServer) : gameServer;
+      }
+      return gameServer;
+    }
+
+    // 🏓🏸🏐 종목별 서버 계산 — 현재 세트의 점수로 '다음/직전 서브 측'을 반환.
+    //   firstServer: 이 매치의 첫 서브('A'|'B'|'skip'|null). 세트마다 첫 서버 교대.
+    //   completedSets: 완료된 세트 수(세트 시작 서버 교대용).
+    //   lastScorer: 직전 득점 측('A'|'B'|null) — 랠리 포인트제에서 사용.
+    function genServerSide(sport, firstServer, completedSets, curA, curB, lastScorer){
+      if(!firstServer || firstServer==='skip') return null;
+      // 세트마다 첫 서버 교대 (탁구·배구 관례). 짝수 세트→firstServer, 홀수→상대.
+      const setServer = ((completedSets||0) % 2 === 0) ? firstServer : otherSide(firstServer);
+      const a = Math.max(0, curA|0), b = Math.max(0, curB|0);
+      if(sport==='tabletennis'){
+        // 2점마다 교체, 단 10-10 듀스부터는 1점마다 교체.
+        const t = a + b;
+        const deuce = a>=10 && b>=10;
+        const changes = deuce ? (10 + (t - 20)) : Math.floor(t/2);
+        return (changes % 2 === 0) ? setServer : otherSide(setServer);
+      }
+      if(sport==='badminton' || sport==='volleyball' || sport==='pickleball'){
+        // 랠리 포인트제 — 직전 랠리 승자가 다음 서브(사이드아웃). 세트 시작은 setServer.
+        if(a===0 && b===0) return setServer;
+        return lastScorer || setServer;
+      }
+      return null;
+    }
+
+    const ScoreboardView = ({ match, config, onSave, onClose }) => {
+      const sm = isSetsGame(config?.sport);
+      const tn = isTennis(config?.sport);
+      const totalSets = config?.sets || 3;
+      const winSets   = Math.ceil(totalSets / 2);
+
+      // 🎾 테니스 설정
+      const tennisSettings = {
+        gamesPerSet: config?.tennisGamesPerSet || 6,
+        deuce: !!config?.tennisDeuce,
+        tiebreak: config?.tennisTiebreak !== false,
+        // 마지막 세트 매치 타이브레이크는 동적으로 계산 (현재 세트가 마지막일 때)
+        finalMatchTb: config?.tennisFinalMatchTb !== false
+      };
+
+      const [curSet,  setCurSet]  = useState(1);
+      const [scoreA,  setScoreA]  = useState(0); // 현재 세트 점수 (논리적 A = match.home)
+      const [scoreB,  setScoreB]  = useState(0); // 논리적 B = match.away
+      const [history, setHistory] = useState([]); // [{a,b}] 완료된 세트
+      const [saving,  setSaving]  = useState(false);
+      const [done,    setDone]    = useState(false);
+      const [courtSwapped, setCourtSwapped] = useState(false); // 좌우 자리 교체 (표시만)
+
+      // 🎾 테니스 전용 상태
+      const [tnState, setTnState] = useState(()=>initTennisState());
+
+      // 🔊 음성 스코어 리더 on/off (브라우저에 기억)
+      const [voiceOn, setVoiceOn] = useState(()=>{
+        try { const v = localStorage.getItem(VOICE_PREF_KEY); return v===null ? true : v==='1'; } catch(e){ return true; }
+      });
+      const toggleVoice = () => {
+        setVoiceOn(v=>{
+          const nv = !v;
+          try { localStorage.setItem(VOICE_PREF_KEY, nv?'1':'0'); } catch(e){}
+          if(nv) speakEnglish('Voice on'); // 사용자 제스처로 오디오 잠금 해제
+          else { try{ window.speechSynthesis && window.speechSynthesis.cancel(); }catch(e){} }
+          return nv;
+        });
+      };
+
+      // 🎾 첫 서브 팀 ('A'=home / 'B'=away). null이면 서브권 미지정(시작 시 선택).
+      const [firstServer, setFirstServer] = useState(null);
+      // 🏓🏸🏐 일반 종목 직전 득점 측('A'|'B') — 랠리 포인트제 서버 추적용
+      const [lastScorer, setLastScorer] = useState(null);
+
+      const wonA = tn ? tnState.sA : history.filter(s=>s.a>s.b).length;
+      const wonB = tn ? tnState.sB : history.filter(s=>s.b>s.a).length;
+      const matchOver = wonA>=winSets || wonB>=winSets;
+      const nameA = match?.home?.name || match?.participant1?.name || '홈';
+      const nameB = match?.away?.name || match?.participant2?.name || '원정';
+
+      // 화면 좌/우 표시 — courtSwapped 일 때 자리 바뀜 (점수도 따라감)
+      const leftName  = courtSwapped ? nameB  : nameA;
+      const rightName = courtSwapped ? nameA  : nameB;
+      const leftScore = courtSwapped ? scoreB : scoreA;
+      const rightScore= courtSwapped ? scoreA : scoreB;
+      const leftWon   = courtSwapped ? wonB   : wonA;
+      const rightWon  = courtSwapped ? wonA   : wonB;
+
+      // 🎾 테니스용 좌/우 값
+      const tnLeftSets    = courtSwapped ? tnState.sB : tnState.sA;
+      const tnRightSets   = courtSwapped ? tnState.sA : tnState.sB;
+      const tnLeftGames   = courtSwapped ? tnState.gB : tnState.gA;
+      const tnRightGames  = courtSwapped ? tnState.gA : tnState.gB;
+      // 현재 포인트 표시 (15/30/40/AD or 타이브레이크 점수)
+      let tnLeftPt = '0', tnRightPt = '0';
+      if(tnState.isTiebreak){
+        tnLeftPt = String(courtSwapped ? tnState.tbB : tnState.tbA);
+        tnRightPt = String(courtSwapped ? tnState.tbA : tnState.tbB);
+      } else if(tnState.isDeuce){
+        if(tnState.advA){ tnLeftPt = courtSwapped?'40':'AD'; tnRightPt = courtSwapped?'AD':'40'; }
+        else if(tnState.advB){ tnLeftPt = courtSwapped?'AD':'40'; tnRightPt = courtSwapped?'40':'AD'; }
+        else { tnLeftPt = '40'; tnRightPt = '40'; }
+      } else {
+        const pA = TENNIS_POINTS[tnState.pA] !== undefined ? TENNIS_POINTS[tnState.pA] : 40;
+        const pB = TENNIS_POINTS[tnState.pB] !== undefined ? TENNIS_POINTS[tnState.pB] : 40;
+        tnLeftPt = String(courtSwapped ? pB : pA);
+        tnRightPt = String(courtSwapped ? pA : pB);
+      }
+
+      // 🎾 현재 서브권 팀 + 화면 좌/우 서브 표시
+      const serverSide = tn
+        ? currentServerSide(tnState, firstServer)
+        : (sm ? genServerSide(config?.sport, firstServer, history.length, scoreA, scoreB, lastScorer) : null);
+      const serveLeft  = !!serverSide && (courtSwapped ? serverSide==='B' : serverSide==='A');
+      const serveRight = !!serverSide && (courtSwapped ? serverSide==='A' : serverSide==='B');
+      // 서브 표시용 종목 아이콘 + 첫 서브 안내 문구(종목별 교체 규칙)
+      const serveIcon = SPORTS_LIST.find(x=>x.id===config?.sport)?.icon || '🎾';
+      const serveRuleText = tn ? '서브권은 게임마다 자동으로 교대됩니다.'
+        : config?.sport==='tabletennis' ? '서브권은 2점마다 교대됩니다. (10-10 듀스부터 1점마다)'
+        : (config?.sport==='badminton'||config?.sport==='volleyball') ? '랠리(포인트)를 이긴 쪽이 다음 서브를 가져갑니다.'
+        : '서브권은 자동으로 교대됩니다.';
+
+      // 🔊 테니스 — tnState 변화 시 영어로 콜
+      const tnPrevRef = useRef(null);
+      const tnLastStateRef = useRef(null);
+      useEffect(()=>{
+        if(!tn) return;
+        // voiceOn/firstServer만 바뀌고 tnState는 그대로면 현재 점수 재낭독 방지
+        if(tnLastStateRef.current === tnState) return;
+        tnLastStateRef.current = tnState;
+        const prev = tnPrevRef.current;
+        tnPrevRef.current = { gA:tnState.gA, gB:tnState.gB, sA:tnState.sA, sB:tnState.sB };
+        if(!voiceOn || done) return;
+        if(!prev) return; // 첫 마운트는 읽지 않음
+        // 세트 종료 (= 게임 종료 포함)
+        if(tnState.sA > prev.sA || tnState.sB > prev.sB){
+          const winner = tnState.sA > prev.sA ? nameA : nameB;
+          const over = tnState.sA >= winSets || tnState.sB >= winSets;
+          speakEnglish(over ? `Game, set and match. ${winner}.` : `Set. ${winner}.`);
+          return;
+        }
+        // 게임 종료
+        if(tnState.gA > prev.gA || tnState.gB > prev.gB){
+          const winner = tnState.gA > prev.gA ? nameA : nameB;
+          speakEnglish(`Game. ${winner}.`);
+          return;
+        }
+        // 일반 포인트 콜 — 서브권 팀 점수부터. 서브권 미지정 시 화면 좌/우 순서.
+        const srv = currentServerSide(tnState, firstServer); // 'A'|'B'|null
+        // 두 값을 (서브측, 리시브측) 순서로 정렬해주는 헬퍼
+        const order = (valA, valB) => srv==='B'
+          ? [valB, valA]
+          : srv==='A'
+            ? [valA, valB]
+            : (courtSwapped ? [valB, valA] : [valA, valB]); // null=화면순서
+        let call = '';
+        if(tnState.isTiebreak){
+          if(tnState.tbA===0 && tnState.tbB===0) return; // 게임/세트 시작 직후
+          const [f,s] = order(tnState.tbA, tnState.tbB);
+          call = (f===s) ? `${numWords(f)} all` : `${numWords(f)} ${numWords(s)}`;
+        } else if(tnState.isDeuce){
+          if(tnState.advA) call = `Advantage. ${nameA}.`;
+          else if(tnState.advB) call = `Advantage. ${nameB}.`;
+          else call = 'Deuce';
+        } else {
+          if(tnState.pA===0 && tnState.pB===0) return; // 0-0은 콜 안 함
+          const cA = TENNIS_CALL[tnState.pA] || 'forty';
+          const cB = TENNIS_CALL[tnState.pB] || 'forty';
+          const [f,s] = order(cA, cB);
+          call = (tnState.pA===tnState.pB) ? `${f} all` : `${f} ${s}`;
+        }
+        speakEnglish(call);
+      }, [tnState, voiceOn, firstServer]);
+
+      // 🔊 일반 종목 — 점수 변화 시 영어로 콜.
+      //   서브권 종목(배드민턴·탁구·배구)은 '서버 점수 먼저'. 그 외/미지정은 화면 좌/우 순서.
+      const genPrevRef = useRef(null);
+      useEffect(()=>{
+        if(tn) return;
+        const prev = genPrevRef.current;
+        genPrevRef.current = { a:scoreA, b:scoreB };
+        if(!voiceOn || done) return;
+        if(!prev) return;                       // 첫 마운트
+        if(scoreA===prev.a && scoreB===prev.b) return;
+        if(scoreA===0 && scoreB===0) return;    // 세트 종료 리셋은 읽지 않음
+        // 직전 득점 측(랠리 승자) — prev 대비 어느 쪽이 올랐는지로 판정
+        const scorer = scoreA>prev.a ? 'A' : scoreB>prev.b ? 'B' : null;
+        // 서버 계산(세트제 종목만). 서버가 정해지면 서버 점수를 먼저 부른다.
+        const srv = sm ? genServerSide(config?.sport, firstServer, history.length, scoreA, scoreB, scorer) : null;
+        let f, r;
+        if(srv==='A'){ f = scoreA; r = scoreB; }
+        else if(srv==='B'){ f = scoreB; r = scoreA; }
+        else { f = courtSwapped ? scoreB : scoreA; r = courtSwapped ? scoreA : scoreB; } // 미지정=화면순서
+        speakEnglish(`${numWords(f)} ${numWords(r)}`);
+      }, [scoreA, scoreB, voiceOn]);
+
+      // 좌/우 클릭 시 어느 쪽 점수가 올라갈지
+      const adjLeft  = (delta) => adj(courtSwapped ? 'B' : 'A', delta);
+      const adjRight = (delta) => adj(courtSwapped ? 'A' : 'B', delta);
+
+      const adj = (side, delta) => {
+        if(matchOver||done) return;
+        // 🎾 테니스 분기
+        if(tn){
+          if(delta > 0){
+            // 마지막 세트 매치 타이브레이크 판정
+            const totalPlayed = tnState.sA + tnState.sB;
+            const isFinalSet = tennisSettings.finalMatchTb && totalPlayed === totalSets - 1 && totalSets > 1;
+            // 매치 타이브레이크는 첫 게임부터 타이브레이크 모드
+            const cur = {...tnState};
+            if(isFinalSet && cur.gA === 0 && cur.gB === 0 && !cur.isTiebreak){
+              cur.isTiebreak = true;
+              cur.tbA = 0; cur.tbB = 0;
+            }
+            const settings = {...tennisSettings, isFinalSet};
+            const next = tennisScorePoint(cur, settings, side);
+            // 세트가 완료됐는지 확인 (sA 또는 sB가 증가했는지)
+            if(next.sA > tnState.sA || next.sB > tnState.sB){
+              // 세트 종료 — 게임수 히스토리 기록
+              const finishedSetGames = {gA: tnState.gA + (side==='A'?1:0), gB: tnState.gB + (side==='B'?1:0)};
+              // 실제로는 endGame이 끝나면서 gA/gB가 리셋되기 전 값 필요 → 다른 방식 사용
+              // tnState에서 endSet 직전 값을 알 수 없으니, next의 setHistory에 추가
+              if(!next.setHistory) next.setHistory = [...(tnState.setHistory||[])];
+              else next.setHistory = [...(tnState.setHistory||[]), ...next.setHistory.slice((tnState.setHistory||[]).length)];
+              // 직전 게임수 추적 — 마지막 게임 직전 상태 + 1
+              const lastA = tnState.gA + (side==='A'? (cur.isDeuce||cur.isTiebreak||cur.pA>=3?1:0) : 0);
+              const lastB = tnState.gB + (side==='B'? (cur.isDeuce||cur.isTiebreak||cur.pB>=3?1:0) : 0);
+              // 더 안전하게: tennisScorePoint 직전의 gA, gB를 next의 setHistory에 추가
+              const sh = [...(tnState.setHistory||[])];
+              // 어느 쪽이 세트승했는지로 결정
+              if(next.sA > tnState.sA){
+                // A가 세트 승 → 마지막 게임 = A 승
+                sh.push({gA: cur.gA + 1, gB: cur.gB});
+              } else {
+                sh.push({gA: cur.gA, gB: cur.gB + 1});
+              }
+              next.setHistory = sh;
+              // 매치 종료 시 firebase 저장
+              if(next.sA >= winSets || next.sB >= winSets){
+                setTnState(next);
+                saveToFirebaseTennis(next, false);
+                return;
+              }
+              // 일반 세트 종료 — 중간 저장
+              setTnState(next);
+              saveToFirebaseTennis(next, false);
+              return;
+            }
+            setTnState(next);
+          } else {
+            // -1: 마지막 포인트 취소 (간단 구현 — 포인트 한 단계 되돌리기)
+            // 정확한 되돌리기는 복잡하므로 일단 현재 포인트만 -1
+            const next = {...tnState};
+            if(next.isTiebreak){
+              if(side==='A' && next.tbA>0) next.tbA--;
+              if(side==='B' && next.tbB>0) next.tbB--;
+            } else if(next.isDeuce){
+              if(side==='A' && next.advA) next.advA = false;
+              else if(side==='B' && next.advB) next.advB = false;
+              else if(!next.advA && !next.advB){
+                // 듀스 → 30-30 으로 (한 명만 한 단계 내림)
+                next.isDeuce = false;
+                if(side==='A') next.pA = 2;
+                if(side==='B') next.pB = 2;
+              }
+            } else {
+              if(side==='A' && next.pA>0) next.pA--;
+              if(side==='B' && next.pB>0) next.pB--;
+            }
+            setTnState(next);
+          }
+          return;
+        }
+        // 일반 종목
+        if(delta>0) setLastScorer(side);   // 직전 득점 측 = 다음 서버(랠리 포인트제)
+        if(side==='A') setScoreA(v=>Math.max(0,v+delta));
+        else           setScoreB(v=>Math.max(0,v+delta));
+      };
+
+      const endSet = () => {
+        if(scoreA===0&&scoreB===0){alert('점수를 먼저 입력하세요.');return;}
+        const newHistory=[...history,{a:scoreA,b:scoreB}];
+        setHistory(newHistory);
+        setScoreA(0); setScoreB(0);
+        setLastScorer(null);              // 새 세트 — 서버는 세트 시작 규칙으로 리셋
+        setCurSet(v=>v+1);
+        // 세트 종료 후 Firebase에 중간 저장
+        saveToFirebase(newHistory, false);
+      };
+
+
+      // ── 결과 저장 — Firebase 대신 KDK 라운드 점수 콜백 ──
+      const commitSave = (hist, isFinal) => {
+        const sA = hist.filter(s => s.a > s.b).length;
+        const sB = hist.filter(s => s.b > s.a).length;
+        const over = sA >= winSets || sB >= winSets;
+        if (!isFinal && !over) return;            // 아직 매치 안 끝났으면 무시(중간 표시만)
+        const last = hist[hist.length - 1] || { a: scoreA, b: scoreB };
+        setDone(true);
+        if (onSave) onSave(last.a, last.b);       // 단판: 그 게임의 점수를 라운드 점수로
+      };
+      const saveToFirebaseTennis = (state, isFinal) => {
+        const sh = state.setHistory || [];
+        const histLike = sh.map(s => ({ a: s.gA, b: s.gB }));
+        setHistory(histLike);
+        commitSave(histLike, isFinal);
+      };
+      const saveToFirebase = (hist, isFinal) => { commitSave(hist, isFinal); };
+
+
+      const finishMatch = () => {
+        if(!matchOver){alert(`경기가 아직 끝나지 않았습니다.\n현재 ${wonA}:${wonB} (${winSets}세트 선승)`);return;}
+        if(!window.confirm('경기를 완전히 종료하고 결과를 저장합니까?'))return;
+        if(tn) saveToFirebaseTennis(tnState, true);
+        else saveToFirebase(history, true);
+      };
+
+      const getScoreColor=(isA)=>{
+        if(matchOver){return isA?(wonA>wonB?'text-green-400':'text-red-400'):(wonB>wonA?'text-green-400':'text-red-400');}
+        return 'text-white';
+      };
+
+      if(done) return (
+        <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center gap-6 p-8 text-white">
+          <span className="text-6xl">🏆</span>
+          <h2 className="text-3xl font-black text-center">{wonA>wonB?nameA:nameB} 승!</h2>
+          <p className="text-slate-400 font-bold text-xl">{wonA} : {wonB} 세트</p>
+          <p className="text-slate-500 text-base">결과가 저장됐습니다.</p>
+        </div>
+      );
+
+      return (
+        <div className="min-h-screen bg-slate-900 flex flex-col select-none relative" style={{touchAction:'manipulation'}}>
+          {/* 🏓🏸🏐🎾 첫 서브 선택 — 세트제(서브권) 종목에서 미지정 시 시작 화면 */}
+          {sm && firstServer===null && !done && (
+            <div className="absolute inset-0 z-50 bg-slate-900/95 flex flex-col items-center justify-center gap-6 sm:gap-8 p-6">
+              <div className="text-center">
+                <p className="text-5xl sm:text-6xl mb-3">{serveIcon}</p>
+                <p className="text-white font-black text-2xl sm:text-3xl">첫 서브는 누구?</p>
+                <p className="text-slate-400 font-bold text-sm sm:text-base mt-2">{serveRuleText}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3 sm:gap-4 w-full max-w-2xl">
+                <button onClick={()=>setFirstServer('A')}
+                  className="py-8 sm:py-12 rounded-2xl bg-blue-600 hover:bg-blue-500 active:scale-95 transition-all text-white font-black text-xl sm:text-3xl break-all px-3">{nameA}</button>
+                <button onClick={()=>setFirstServer('B')}
+                  className="py-8 sm:py-12 rounded-2xl bg-rose-600 hover:bg-rose-500 active:scale-95 transition-all text-white font-black text-xl sm:text-3xl break-all px-3">{nameB}</button>
+              </div>
+              <button onClick={()=>setFirstServer('skip')}
+                className="text-slate-500 hover:text-slate-300 text-sm font-bold underline underline-offset-4">서브권 표시 없이 시작</button>
+            </div>
+          )}
+          {/* 상단 — 대회명 + 닫기 (얇게) */}
+          <div className="bg-slate-800 px-3 sm:px-6 py-2 flex justify-between items-center shrink-0 gap-2 sm:gap-4">
+            <div className="min-w-0 flex items-baseline gap-1.5 sm:gap-3">
+              <p className="text-xs sm:text-sm font-black text-slate-300 truncate">{config?.name}</p>
+              <p className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest shrink-0">{match._slotLabel&&<span className="text-amber-400 mr-1">{match._slotLabel}</span>}{sm?`${totalSets===1?'단판':totalSets+'판 '+winSets+'선승'}`:''} {match.court?`· ${match.court}코트`:''}</p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {/* 🔊 음성 스코어 리더 on/off — 포인트 시 영어로 점수 콜 */}
+              <button onClick={toggleVoice}
+                className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center text-base sm:text-lg active:scale-90 transition-all ${voiceOn?'bg-blue-600 hover:bg-blue-500 text-white':'bg-slate-700 hover:bg-slate-600 text-slate-400'}`}
+                title={voiceOn?'음성 콜 끄기 (영어)':'음성 콜 켜기 (영어)'}>
+                {voiceOn?'🔊':'🔇'}
+              </button>
+              {onClose&&(
+                <button onClick={onClose}
+                  className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-slate-700 hover:bg-slate-600 text-white flex items-center justify-center text-base sm:text-lg active:scale-90 transition-all" title="닫기">✕</button>
+              )}
+            </div>
+          </div>
+
+          {/* 선수명 — 헤더 바로 아래 */}
+          <div className="bg-slate-900 grid grid-cols-2 divide-x divide-slate-700 shrink-0 border-b border-slate-800">
+            <div className="text-center py-3 sm:py-4">
+              <p className="text-white font-black text-xl sm:text-3xl md:text-4xl leading-tight break-all px-2">
+                {serveLeft&&<span className="text-amber-400 mr-1.5" title="서브권">{serveIcon}</span>}{leftName}
+              </p>
+            </div>
+            <div className="text-center py-3 sm:py-4">
+              <p className="text-white font-black text-xl sm:text-3xl md:text-4xl leading-tight break-all px-2">
+                {serveRight&&<span className="text-amber-400 mr-1.5" title="서브권">{serveIcon}</span>}{rightName}
+              </p>
+            </div>
+          </div>
+
+          {/* 메인 — 🎾 테니스 / 일반 세트제 / 비세트제 분기 */}
+          {tn ? (
+            /* 🎾 테니스 스코어보드 — [포인트 · 게임 · 세트 | 세트 · 게임 · 포인트] */
+            <div className="flex-1 grid grid-cols-[1fr_auto_auto_auto_auto_1fr] divide-x divide-slate-700 items-stretch">
+              {/* 좌측 포인트 — 거대, 탭하여 +1 */}
+              <button onPointerDown={()=>adjLeft(1)}
+                className={`flex flex-col items-center justify-center py-4 sm:py-6 active:bg-blue-900/40 transition-colors ${matchOver&&leftWon>rightWon?'bg-green-900/15':''}`}>
+                <div className={`font-black tabular-nums leading-none ${getScoreColor(!courtSwapped)}`} style={{fontSize: tnLeftPt==='AD' ? 'min(20vw,14rem)' : 'min(26vw,18rem)'}}>
+                  {tnLeftPt}
+                </div>
+                <div className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest mt-2 sm:mt-4">
+                  {tnState.isTiebreak ? '타이브레이크' : '탭하여 포인트'}
+                </div>
+              </button>
+
+              {/* 좌측 게임수 */}
+              <div className="flex flex-col items-center justify-center px-1.5 sm:px-3 md:px-5 bg-slate-950/30">
+                <p className="text-[9px] sm:text-[11px] font-black text-blue-300/60 uppercase tracking-widest mb-1 sm:mb-2">게임</p>
+                <div className="font-black text-blue-300 tabular-nums leading-none" style={{fontSize:'min(10vw,6rem)'}}>{tnLeftGames}</div>
+              </div>
+
+              {/* 좌측 세트 승수 */}
+              <div className="flex flex-col items-center justify-center px-1.5 sm:px-3 md:px-5 bg-slate-950/60">
+                <p className="text-[9px] sm:text-[11px] font-black text-amber-300/60 uppercase tracking-widest mb-1 sm:mb-2">세트</p>
+                <div className="font-black text-amber-300 tabular-nums leading-none" style={{fontSize:'min(10vw,6rem)'}}>{tnLeftSets}</div>
+              </div>
+
+              {/* 우측 세트 승수 */}
+              <div className="flex flex-col items-center justify-center px-1.5 sm:px-3 md:px-5 bg-slate-950/60">
+                <p className="text-[9px] sm:text-[11px] font-black text-amber-300/60 uppercase tracking-widest mb-1 sm:mb-2">세트</p>
+                <div className="font-black text-amber-300 tabular-nums leading-none" style={{fontSize:'min(10vw,6rem)'}}>{tnRightSets}</div>
+              </div>
+
+              {/* 우측 게임수 */}
+              <div className="flex flex-col items-center justify-center px-1.5 sm:px-3 md:px-5 bg-slate-950/30">
+                <p className="text-[9px] sm:text-[11px] font-black text-blue-300/60 uppercase tracking-widest mb-1 sm:mb-2">게임</p>
+                <div className="font-black text-blue-300 tabular-nums leading-none" style={{fontSize:'min(10vw,6rem)'}}>{tnRightGames}</div>
+              </div>
+
+              {/* 우측 포인트 */}
+              <button onPointerDown={()=>adjRight(1)}
+                className={`flex flex-col items-center justify-center py-4 sm:py-6 active:bg-rose-900/40 transition-colors ${matchOver&&rightWon>leftWon?'bg-green-900/15':''}`}>
+                <div className={`font-black tabular-nums leading-none ${getScoreColor(courtSwapped)}`} style={{fontSize: tnRightPt==='AD' ? 'min(20vw,14rem)' : 'min(26vw,18rem)'}}>
+                  {tnRightPt}
+                </div>
+                <div className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest mt-2 sm:mt-4">
+                  {tnState.isTiebreak ? '타이브레이크' : '탭하여 포인트'}
+                </div>
+              </button>
+            </div>
+          ) : sm ? (
+            <div className="flex-1 grid grid-cols-[1fr_auto_auto_1fr] divide-x divide-slate-700 items-stretch">
+              {/* 좌측 점수 — 거대, 탭하여 +1 */}
+              <button onPointerDown={()=>adjLeft(1)}
+                className={`flex flex-col items-center justify-center py-4 sm:py-6 active:bg-blue-900/40 transition-colors ${matchOver&&leftWon>rightWon?'bg-green-900/15':''}`}>
+                <div className={`font-black tabular-nums leading-none ${getScoreColor(!courtSwapped)}`} style={{fontSize:'min(28vw,20rem)'}}>
+                  {leftScore}
+                </div>
+                <div className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest mt-2 sm:mt-4">탭하여 +1</div>
+              </button>
+
+              {/* 좌측 세트 승수 */}
+              <div className="flex flex-col items-center justify-center px-2 sm:px-4 md:px-8 bg-slate-950/50">
+                <p className="text-[9px] sm:text-[11px] font-black text-amber-300/60 uppercase tracking-widest mb-1 sm:mb-2">세트</p>
+                <div className="font-black text-amber-300 tabular-nums leading-none" style={{fontSize:'min(12vw,8rem)'}}>{leftWon}</div>
+              </div>
+
+              {/* 우측 세트 승수 */}
+              <div className="flex flex-col items-center justify-center px-2 sm:px-4 md:px-8 bg-slate-950/50">
+                <p className="text-[9px] sm:text-[11px] font-black text-amber-300/60 uppercase tracking-widest mb-1 sm:mb-2">세트</p>
+                <div className="font-black text-amber-300 tabular-nums leading-none" style={{fontSize:'min(12vw,8rem)'}}>{rightWon}</div>
+              </div>
+
+              {/* 우측 점수 — 거대, 탭하여 +1 */}
+              <button onPointerDown={()=>adjRight(1)}
+                className={`flex flex-col items-center justify-center py-4 sm:py-6 active:bg-rose-900/40 transition-colors ${matchOver&&rightWon>leftWon?'bg-green-900/15':''}`}>
+                <div className={`font-black tabular-nums leading-none ${getScoreColor(courtSwapped)}`} style={{fontSize:'min(28vw,20rem)'}}>
+                  {rightScore}
+                </div>
+                <div className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest mt-2 sm:mt-4">탭하여 +1</div>
+              </button>
+            </div>
+          ) : (
+            /* 비세트 종목 — 양쪽 거대 점수만 */
+            <div className="flex-1 grid grid-cols-2 divide-x divide-slate-700">
+              <button onPointerDown={()=>adjLeft(1)}
+                className={`flex flex-col items-center justify-center active:bg-blue-900/40 transition-colors ${matchOver&&leftWon>rightWon?'bg-green-900/15':''}`}>
+                <div className={`font-black tabular-nums leading-none ${getScoreColor(!courtSwapped)}`} style={{fontSize:'min(35vw,24rem)'}}>{leftScore}</div>
+                <div className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest mt-2 sm:mt-4">탭하여 +1</div>
+              </button>
+              <button onPointerDown={()=>adjRight(1)}
+                className={`flex flex-col items-center justify-center active:bg-rose-900/40 transition-colors ${matchOver&&rightWon>leftWon?'bg-green-900/15':''}`}>
+                <div className={`font-black tabular-nums leading-none ${getScoreColor(courtSwapped)}`} style={{fontSize:'min(35vw,24rem)'}}>{rightScore}</div>
+                <div className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest mt-2 sm:mt-4">탭하여 +1</div>
+              </button>
+            </div>
+          )}
+
+          {/* 차감 + 코트 체인지 버튼 */}
+          <div className="grid grid-cols-[1fr_auto_1fr] gap-2 sm:gap-3 px-2 sm:px-3 pt-2 sm:pt-3 bg-slate-900 shrink-0">
+            <button onPointerDown={e=>{e.stopPropagation();adjLeft(-1);}}
+              className="py-2 sm:py-3 rounded-xl sm:rounded-2xl bg-slate-800 hover:bg-slate-700 text-white text-2xl sm:text-3xl font-black active:scale-95 transition-all flex items-center justify-center">−</button>
+            <button onClick={()=>setCourtSwapped(s=>!s)}
+              className="px-3 sm:px-4 py-2 sm:py-3 rounded-xl sm:rounded-2xl bg-amber-600 hover:bg-amber-500 text-white text-sm sm:text-base font-black active:scale-95 transition-all flex items-center justify-center gap-1" title="코트 체인지 — 좌우 자리 교체">
+              🔄 <span className="hidden sm:inline">코트</span>
+            </button>
+            <button onPointerDown={e=>{e.stopPropagation();adjRight(-1);}}
+              className="py-2 sm:py-3 rounded-xl sm:rounded-2xl bg-slate-800 hover:bg-slate-700 text-white text-2xl sm:text-3xl font-black active:scale-95 transition-all flex items-center justify-center">−</button>
+          </div>
+          {/* 하단 — 세트 히스토리 + 버튼 */}
+          <div className="bg-slate-800 px-3 sm:px-6 py-3 sm:py-4 space-y-2 sm:space-y-3 shrink-0">
+            {tn ? (
+              /* 🎾 테니스 히스토리 — 완료된 세트의 게임수 표시 */
+              (tnState.setHistory||[]).length>0&&(
+                <div className="flex gap-1.5 sm:gap-3 justify-center flex-wrap">
+                  {(tnState.setHistory||[]).map((s,i)=>(
+                    <div key={i} className="text-center bg-slate-900 px-2 sm:px-3 py-1 rounded-lg">
+                      <p className="text-[9px] sm:text-[11px] text-slate-400 font-black uppercase">{i+1}세트</p>
+                      <p className={`text-sm sm:text-lg font-black ${s.gA>s.gB?'text-green-400':'text-rose-400'}`}>{s.gA} : {s.gB}</p>
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : (
+              history.length>0&&(
+                <div className="flex gap-1.5 sm:gap-3 justify-center flex-wrap">
+                  {history.map((s,i)=>(
+                    <div key={i} className="text-center bg-slate-900 px-2 sm:px-3 py-1 rounded-lg">
+                      <p className="text-[9px] sm:text-[11px] text-slate-400 font-black uppercase">{i+1}세트</p>
+                      <p className={`text-sm sm:text-lg font-black ${s.a>s.b?'text-green-400':'text-rose-400'}`}>{s.a} : {s.b}</p>
+                    </div>
+                  ))}
+                </div>
+              )
+            )}
+            <div className="flex gap-2 sm:gap-3">
+              {sm&&!tn&&!matchOver&&(
+                <button onClick={endSet} disabled={saving}
+                  className="flex-1 py-3 sm:py-5 bg-amber-500 text-white rounded-xl sm:rounded-2xl font-black text-base sm:text-lg active:bg-amber-400 active:scale-95 transition-all">
+                  {saving?'저장 중...':'✅ 세트 종료'}
+                </button>
+              )}
+              <button onClick={finishMatch} disabled={saving}
+                className={`flex-1 py-3 sm:py-5 rounded-xl sm:rounded-2xl font-black text-base sm:text-lg transition-all active:scale-95 ${matchOver?'bg-green-600 text-white active:bg-green-500':'bg-slate-600 text-slate-400'}`}>
+                {saving?'저장 중...':matchOver?'🏆 경기 종료 저장':'경기 종료'}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // ── 라운드 표 (한 그룹) ──────────────────────────────────
+    function GroupSchedule({ group, result, options, courtLabel, scores, onScore, onScoreboard }) {
+      const c = COLORS[group.color] || COLORS.blue;
+      const r = result;
+      const sc = scores || {};
+      if (!r) return null;
+
+      return (
+        <div className={`group-page ${options.printMode === 'each' ? 'page-each' : ''} bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden print-area mb-6`}>
+          <div className={`bg-gradient-to-r ${c.head} px-5 py-3 flex items-center justify-between flex-wrap gap-2`}>
+            <div className="flex items-center gap-2">
+              <span className="text-white font-display text-xl">{group.name}</span>
+              <span className="text-white/80 text-sm font-bold">· KDK 복식</span>
+            </div>
+            <div className="flex items-center gap-2 text-white text-xs font-bold">
+              <span className="bg-white/20 px-2 py-1 rounded-lg">{r.k}명</span>
+              <span className="bg-white/20 px-2 py-1 rounded-lg">{r.rounds.length}라운드</span>
+              <span className="bg-white/20 px-2 py-1 rounded-lg">
+                {r.mode === 'fixed' ? '인당 ' + r.targetGames + '게임' : '인당 ' + (r.k - 1) + '게임'}
+              </span>
+              {courtLabel && <span className="bg-white/25 px-2 py-1 rounded-lg">🏟 {courtLabel}</span>}
+            </div>
+          </div>
+
+          {/* 경고 */}
+          {r.warnings.length > 0 && (
+            <div className="px-5 pt-3 space-y-1">
+              {r.warnings.map((w, i) => (
+                <p key={i} className="text-[12px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">⚠ {w}</p>
+              ))}
+            </div>
+          )}
+
+          {r.rounds.length === 0 ? (
+            <div className="p-6 text-center text-slate-400 font-bold">학생 4명 이상을 입력하세요.</div>
+          ) : (
+            <div className="p-3 sm:p-4 overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="text-[11px] uppercase tracking-wider text-slate-400 font-black">
+                    <th className="text-center py-2 px-2 w-12">R</th>
+                    <th className="text-right py-2 px-2">팀 A</th>
+                    <th className="text-center py-2 px-1 w-10">vs</th>
+                    <th className="text-left py-2 px-2">팀 B</th>
+                    <th className="text-left py-2 px-2">대기</th>
+                    {options.score && <th className="text-center py-2 px-2 w-24 no-print-keep">점수</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {r.rounds.map(rd => (
+                    <tr key={rd.round} className="border-t border-slate-100">
+                      <td className="text-center py-2.5 px-2">
+                        <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full ${c.soft} ${c.text} font-black text-xs`}>{rd.round}</span>
+                      </td>
+                      <td className="text-right py-2.5 px-2 font-bold text-slate-800 whitespace-nowrap">{rd.teamA.join(' · ')}</td>
+                      <td className="text-center py-2.5 px-1 text-slate-300 font-black text-xs">vs</td>
+                      <td className="text-left py-2.5 px-2 font-bold text-slate-800 whitespace-nowrap">{rd.teamB.join(' · ')}</td>
+                      <td className="text-left py-2.5 px-2 text-[12px] text-slate-400">{rd.waiting.length ? rd.waiting.join(', ') : '—'}</td>
+                      {options.score && (
+                        <td className="text-center py-2 px-2">
+                          <span className="inline-flex items-center gap-1">
+                            <input value={(sc[rd.round] && sc[rd.round].a) || ''}
+                              onChange={e => onScore && onScore(rd.round, 'a', e.target.value)}
+                              inputMode="numeric" maxLength={3}
+                              className="w-9 h-7 border border-slate-300 rounded text-center text-xs font-bold focus:border-indigo-500 outline-none" placeholder="-" />
+                            <span className="text-slate-300">:</span>
+                            <input value={(sc[rd.round] && sc[rd.round].b) || ''}
+                              onChange={e => onScore && onScore(rd.round, 'b', e.target.value)}
+                              inputMode="numeric" maxLength={3}
+                              className="w-9 h-7 border border-slate-300 rounded text-center text-xs font-bold focus:border-indigo-500 outline-none" placeholder="-" />
+                            <button onClick={() => onScoreboard && onScoreboard(rd)} title="스코어보드로 입력"
+                              className="no-print ml-1 w-7 h-7 rounded-lg bg-slate-800 text-white hover:bg-slate-900 active:scale-95 text-sm leading-none">🏓</button>
+                          </span>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* 선수별 요약 */}
+              <details className="mt-3 group/sum">
+                <summary className="cursor-pointer text-[12px] font-black text-slate-400 hover:text-slate-600 list-none select-none">
+                  ▸ 선수별 출전·파트너 요약
+                </summary>
+                <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  {r.perPlayer.map(p => (
+                    <div key={p.name} className={`text-[12px] rounded-lg px-3 py-1.5 ${c.soft} border`}>
+                      <span className="font-black">{p.name}</span>
+                      <span className="text-slate-500"> — {p.games}게임 / 대기 {p.byes}회 · 파트너 {p.partners.length}명 · 상대 {p.opponents.length}명</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+
+              {/* 순위표 (점수 입력 시) */}
+              {options.score && <StandingsTable result={r} scores={sc} color={group.color} />}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ── 메인 앱 ──────────────────────────────────────────────
+    function App() {
+      const [groups, setGroups] = useState(DEFAULT_GROUPS);
+      const [options, setOptions] = useState({ score: true, printMode: 'each', mode: 'full', gamesPerPlayer: 5, seed: 2025 });
+      const [scores, setScores] = useState({}); // { [groupId]: { [round]: {a, b} } }
+      const [results, setResults] = useState(null); // [{group, result, courtLabel}]
+      const [sb, setSb] = useState(null); // 스코어보드 { groupId, round, teamA, teamB, init }
+      const [voiceOn, setVoiceOn] = useState(true); // 영어 음성 콜
+      const firstLoad = useRef(true);
+
+      // 로드/저장
+      useEffect(() => {
+        try {
+          const raw = localStorage.getItem(LS_KEY);
+          if (raw) {
+            const data = JSON.parse(raw);
+            if (Array.isArray(data.groups) && data.groups.length) setGroups(data.groups);
+            if (data.options) setOptions(o => ({ ...o, ...data.options }));
+            if (data.scores) setScores(data.scores);
+            if (typeof data.voiceOn === 'boolean') setVoiceOn(data.voiceOn);
+          }
+        } catch (e) {}
+        firstLoad.current = false;
+      }, []);
+      useEffect(() => {
+        if (firstLoad.current) return;
+        try { localStorage.setItem(LS_KEY, JSON.stringify({ groups, options, scores, voiceOn })); } catch (e) {}
+      }, [groups, options, scores, voiceOn]);
+
+      function setScore(groupId, round, side, val) {
+        const clean = String(val).replace(/[^0-9]/g, '').slice(0, 3);
+        setScores(prev => {
+          const g = prev[groupId] || {};
+          const cell = g[round] || { a: '', b: '' };
+          return { ...prev, [groupId]: { ...g, [round]: { ...cell, [side]: clean } } };
+        });
+      }
+
+      function updateGroup(i, g) { setGroups(gs => gs.map((x, idx) => idx === i ? g : x)); }
+      function removeGroup(i) { setGroups(gs => gs.filter((_, idx) => idx !== i)); }
+      function addGroup() {
+        const n = groups.length + 1;
+        setGroups(gs => [...gs, { id: 'g' + Date.now(), name: '그룹 ' + n, color: COLOR_CYCLE[gs.length % COLOR_CYCLE.length], roster: '' }]);
+      }
+
+      function generate() {
+        const out = groups.map((g, idx) => {
+          const names = rosterToNames(g.roster);
+          const result = RRD.generateGroupSchedule(names, {
+            seed: options.seed + idx,                       // 그룹마다 다른 시드(상대 분포 다양화)
+            mode: options.mode,                             // 'full' | 'fixed'
+            gamesPerPlayer: options.gamesPerPlayer,         // 고정 모드 인당 게임수
+          });
+          return { group: g, result };
+        });
+        setScores({});   // 새 대진 → 기존 점수 초기화
+        // 코트 매핑: 동시 진행 가능 그룹을 2개씩 코트1·코트2에 배정
+        const playable = out.filter(o => o.result.rounds.length > 0);
+        playable.forEach((o, i) => {
+          const slot = Math.floor(i / 2) + 1;   // 1조차, 2조차 ...
+          const court = (i % 2) + 1;
+          o.courtLabel = `${slot}타임 · 코트${court}`;
+        });
+        setResults(out);
+        setTimeout(() => {
+          const el = document.getElementById('results');
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 50);
+      }
+
+      function loadSample() {
+        const f1 = ['김민지','이서연','박지우','최예린','정수아','강하윤','윤채원','한소율'];
+        const f2 = ['오지안','서유나','노아인','임다은','조하랑','신가은','권나윤'];
+        const m1 = ['김도윤','이준서','박시우','최하준','정은우','강지호','윤건우','한선우'];
+        const m2 = ['오태양','서이안','노주원','임지훈','조현우','신준혁','권민재'];
+        setGroups([
+          { id:'g1', name:'여자 1조', color:'rose',   roster: f1.join('\n') },
+          { id:'g2', name:'여자 2조', color:'pink',   roster: f2.join('\n') },
+          { id:'g3', name:'남자 1조', color:'blue',   roster: m1.join('\n') },
+          { id:'g4', name:'남자 2조', color:'indigo', roster: m2.join('\n') },
+        ]);
+      }
+
+      const playableResults = results ? results.filter(o => o.result.rounds.length > 0) : [];
+
+      return (
+        <div className="max-w-5xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
+          {/* 헤더 */}
+          <header className="no-print flex items-center justify-between gap-2 mb-5">
+            <a href="./" className="flex items-center gap-2 group shrink-0">
+              <span className="text-2xl transition-transform group-hover:scale-110">🏁</span>
+              <span className="text-sm font-black text-slate-400 group-hover:text-slate-700">← MatchMaker Pro</span>
+            </a>
+          </header>
+
+          <div className="no-print mb-6">
+            <h1 className="font-display text-2xl sm:text-3xl text-slate-900 flex items-center gap-2">
+              🎾 KDK 방식
+              <span className="text-base font-bold text-slate-400">라운드 로빈 복식</span>
+              <span className="text-[10px] font-black bg-gradient-to-br from-emerald-500 to-teal-600 text-white px-2 py-0.5 rounded uppercase tracking-wide">New</span>
+            </h1>
+            <p className="text-slate-500 text-sm font-medium mt-1">
+              피클볼 수업용 — 그룹별로 <b>매 라운드 4명이 복식(2 vs 2)</b>, 나머지는 대기.
+              파트너·상대를 계속 바꿔 가며 돌리는 KDK 대진을 자동 편성합니다.
+            </p>
+          </div>
+
+          {/* 옵션 바 */}
+          <div className="no-print bg-white rounded-2xl border border-slate-200 shadow-sm p-3 sm:p-4 mb-5 space-y-3">
+            {/* 진행 방식 */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-black text-slate-700">진행 방식</span>
+              <div className="flex rounded-xl overflow-hidden border-2 border-slate-200">
+                <button onClick={() => setOptions(o => ({ ...o, mode: 'full' }))}
+                  className={`px-3 py-1.5 text-sm font-black transition-all ${options.mode === 'full' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                  전체 (모든 파트너 1회)
+                </button>
+                <button onClick={() => setOptions(o => ({ ...o, mode: 'fixed' }))}
+                  className={`px-3 py-1.5 text-sm font-black transition-all ${options.mode === 'fixed' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                  인당 고정 게임수
+                </button>
+              </div>
+              {options.mode === 'fixed' && (
+                <label className="flex items-center gap-1.5 text-sm font-bold text-slate-600">
+                  인당
+                  <input type="number" min="1" max="20" value={options.gamesPerPlayer}
+                    onChange={e => setOptions(o => ({ ...o, gamesPerPlayer: Math.max(1, parseInt(e.target.value) || 1) }))}
+                    className="w-14 border-2 border-slate-200 rounded-lg px-2 py-1 text-sm font-black text-center" />
+                  게임
+                </label>
+              )}
+              <span className="text-[12px] text-slate-400 font-medium">
+                {options.mode === 'full'
+                  ? '시간이 충분할 때 — 모든 학생이 서로 1회씩 파트너'
+                  : '시간이 부족할 때 — 각자 정해진 게임수만 (파트너 최대한 다양)'}
+              </span>
+            </div>
+
+            <div className="border-t border-slate-100" />
+
+            {/* 표시/인쇄 옵션 */}
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-2 text-sm font-bold text-slate-600 cursor-pointer">
+                <input type="checkbox" checked={options.score}
+                  onChange={e => setOptions(o => ({ ...o, score: e.target.checked }))} className="w-4 h-4 accent-indigo-600" />
+                점수 입력칸 + 순위표
+              </label>
+              <label className="flex items-center gap-2 text-sm font-bold text-slate-600 cursor-pointer">
+                인쇄:
+                <select value={options.printMode} onChange={e => setOptions(o => ({ ...o, printMode: e.target.value }))}
+                  className="border-2 border-slate-200 rounded-lg px-2 py-1 text-sm font-bold">
+                  <option value="each">그룹당 1장</option>
+                  <option value="all">전체 이어서</option>
+                </select>
+              </label>
+              <button onClick={() => setOptions(o => ({ ...o, seed: (o.seed + 1) % 100000 }))}
+                className="text-sm font-bold text-slate-500 hover:text-indigo-600 border-2 border-slate-200 rounded-lg px-3 py-1">🎲 다른 조합</button>
+            </div>
+          </div>
+
+          {/* 그룹 입력 */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+            {groups.map((g, i) => (
+              <GroupCard key={g.id} group={g} index={i}
+                onChange={ng => updateGroup(i, ng)}
+                onRemove={() => removeGroup(i)}
+                canRemove={groups.length > 1} />
+            ))}
+          </div>
+
+          {/* 액션 */}
+          <div className="no-print flex flex-wrap items-center gap-2 mb-8">
+            <button onClick={generate}
+              className="bg-gradient-to-br from-indigo-600 to-violet-600 text-white px-6 py-3 rounded-2xl font-black shadow-md hover:shadow-lg active:scale-95 transition-all">
+              🚀 로테이션 생성
+            </button>
+            <button onClick={addGroup}
+              className="bg-slate-100 text-slate-600 px-4 py-3 rounded-2xl font-black hover:bg-slate-200 active:scale-95">＋ 그룹 추가</button>
+            <button onClick={loadSample}
+              className="bg-slate-100 text-slate-600 px-4 py-3 rounded-2xl font-black hover:bg-slate-200 active:scale-95">📋 예시 명단</button>
+            {results && (
+              <button onClick={() => window.print()}
+                className="bg-slate-800 text-white px-4 py-3 rounded-2xl font-black hover:bg-slate-900 active:scale-95">🖨 인쇄 / PDF</button>
+            )}
+          </div>
+
+          {/* 결과 */}
+          {results && (
+            <div id="results">
+              {/* 코트 매핑 안내 */}
+              {playableResults.length > 0 && (
+                <div className="no-print bg-gradient-to-br from-slate-800 to-slate-900 text-white rounded-2xl p-4 sm:p-5 mb-6 shadow-md">
+                  <h3 className="font-display text-lg mb-2 flex items-center gap-2">🏟 코트 배정 (코트 2개 기준)</h3>
+                  <p className="text-slate-300 text-sm mb-3">
+                    그룹별 일정은 독립적입니다. 코트가 2개이므로 <b className="text-white">두 그룹이 동시</b>에 진행할 수 있어요.
+                    아래 순서대로 코트에 배치하고, 한 타임이 끝나면 다음 그룹으로 교체하세요.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {playableResults.map((o, i) => {
+                      const c = COLORS[o.group.color] || COLORS.blue;
+                      return (
+                        <span key={o.group.id} className={`text-xs font-black px-3 py-1.5 rounded-xl bg-gradient-to-r ${c.head} text-white`}>
+                          {o.courtLabel} ← {o.group.name}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {results.map(o => (
+                <GroupSchedule key={o.group.id} group={o.group} result={o.result}
+                  options={options} courtLabel={o.courtLabel}
+                  scores={scores[o.group.id] || {}}
+                  onScore={(round, side, val) => setScore(o.group.id, round, side, val)}
+                  onScoreboard={(rd) => setSb({
+                    groupId: o.group.id, groupName: o.group.name, round: rd.round,
+                    teamA: rd.teamA, teamB: rd.teamB,
+                  })} />
+              ))}
+
+              <div className="no-print text-center text-[12px] text-slate-400 font-medium py-6">
+                MatchMaker Pro · KDK 방식 (라운드 로빈 복식) — 알고리즘 검증됨
+                {options.mode === 'fixed' ? ' · 인당 ' + options.gamesPerPlayer + '게임 고정' : ' · 모든 파트너 1회'}
+              </div>
+            </div>
+          )}
+
+          {/* 🏓 스코어보드 (메인 앱 스코어보드 이식) */}
+          {sb && (
+            <div className="fixed inset-0 z-50 overflow-auto">
+              <ScoreboardView
+                match={{ home: { name: sb.teamA.join(' · ') }, away: { name: sb.teamB.join(' · ') }, court: '' }}
+                config={{ name: (sb.groupName || '') + ' · ' + sb.round + '경기', sport: 'pickleball', sets: 1 }}
+                onSave={(a, b) => {
+                  setScore(sb.groupId, sb.round, 'a', String(a));
+                  setScore(sb.groupId, sb.round, 'b', String(b));
+                  setSb(null);
+                }}
+                onClose={() => setSb(null)} />
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

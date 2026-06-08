@@ -1,13 +1,15 @@
 // MatchMaker Pro Service Worker
 // 오프라인 모드 지원 + 빠른 로딩을 위한 캐시 관리
 
-const CACHE_VERSION = 'matchmaker-pro-v1.0.24';
+const CACHE_VERSION = 'matchmaker-pro-v1.0.27';
 const CACHE_NAME = `${CACHE_VERSION}-static`;
 
 // 앱 핵심 파일
 const STATIC_ASSETS = [
   './',
   './index.html',
+  './round-robin-doubles.html',
+  './round-robin-doubles.js',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
