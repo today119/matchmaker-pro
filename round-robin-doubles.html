@@ -201,8 +201,756 @@
       );
     }
 
+    // ── 영어 음성 콜 (메인 앱 방식 차용) ────────────────────
+    let _enVoice = null, _voicesReady = false;
+    function refreshVoices() {
+      try {
+        const vs = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+        if (vs && vs.length) {
+          _enVoice = vs.find(v => /en[-_]US/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null;
+          _voicesReady = true;
+        }
+      } catch (e) {}
+    }
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      refreshVoices();
+      try { window.speechSynthesis.onvoiceschanged = refreshVoices; } catch (e) {}
+    }
+    function speakEnglish(text) {
+      try {
+        const synth = window.speechSynthesis;
+        if (!synth || !text) return;
+        if (!_voicesReady) refreshVoices();
+        synth.cancel();
+        const u = new SpeechSynthesisUtterance(String(text));
+        u.lang = 'en-US';
+        if (_enVoice) u.voice = _enVoice;
+        u.rate = 1.0; u.pitch = 1.0; u.volume = 1.0;
+        synth.speak(u);
+      } catch (e) {}
+    }
+
+    // ════════ 메인 앱 스코어보드 이식 (피클볼: 11점 랠리·서브표시·영어 음성콜) ════════
+    // index.html 의 ScoreboardView + 의존부 복사. 저장만 KDK 라운드 콜백으로 교체.
+    // ── 종목 상수(피클볼 포함) ──
+    const SPORTS_LIST = [
+      { id: 'pickleball',  name: '피클볼',   icon: '🥒' },
+      { id: 'badminton',   name: '배드민턴', icon: '🏸' },
+      { id: 'volleyball',  name: '배구',     icon: '🏐' },
+      { id: 'tabletennis', name: '탁구',     icon: '🏓' },
+      { id: 'tennis',      name: '테니스',   icon: '🎾' },
+    ];
+    const SETS_SPORTS = ['pickleball', 'badminton', 'tennis', 'tabletennis', 'volleyball'];
+    const isSetsGame = (sport) => SETS_SPORTS.includes(sport);
+    const isTennis   = (sport) => sport === 'tennis';
+
+    const TENNIS_POINTS = [0, 15, 30, 40];
+    const ptDisplay = (p, isAd) => isAd ? 'AD' : (p<=3 ? TENNIS_POINTS[p] : 40);
+
+    // 한 포인트 후의 상태 계산
+    // state: {gA, gB, pA, pB, isDeuce, advA, advB, isTiebreak, tbA, tbB}
+    // settings: {gamesPerSet, deuce: true=듀스, false=노애드, tiebreak: true, isFinalSet: boolean}
+    // scorer: 'A' or 'B'
+    function tennisScorePoint(state, settings, scorer) {
+      const next = {...state};
+      const {gamesPerSet, deuce, tiebreak, isFinalSet} = settings;
+
+      // 1. 타이브레이크 진행 중
+      if(next.isTiebreak){
+        if(scorer==='A') next.tbA++; else next.tbB++;
+        // 마지막 세트 매치 타이브레이크면 10점, 일반은 7점
+        const tbTarget = isFinalSet ? 10 : 7;
+        const tbA = next.tbA, tbB = next.tbB;
+        if(tbA >= tbTarget && tbA - tbB >= 2){
+          // A 타이브레이크 승
+          next.gA++; next.tbA = 0; next.tbB = 0; next.isTiebreak = false;
+          return endGame(next, settings);
+        }
+        if(tbB >= tbTarget && tbB - tbA >= 2){
+          next.gB++; next.tbA = 0; next.tbB = 0; next.isTiebreak = false;
+          return endGame(next, settings);
+        }
+        return next;
+      }
+
+      // 2. 듀스 모드 (40-40)
+      if(next.isDeuce){
+        if(deuce){
+          // 어드밴티지 룰
+          if(scorer==='A'){
+            if(next.advB){ next.advB=false; } // B 어드 → 듀스로 복귀
+            else if(next.advA){ // A가 어드 + A 득점 → 게임승
+              next.advA=false; next.isDeuce=false; next.pA=0; next.pB=0;
+              next.gA++;
+              return endGame(next, settings);
+            }
+            else { next.advA=true; }
+          } else {
+            if(next.advA){ next.advA=false; }
+            else if(next.advB){
+              next.advB=false; next.isDeuce=false; next.pA=0; next.pB=0;
+              next.gB++;
+              return endGame(next, settings);
+            }
+            else { next.advB=true; }
+          }
+        } else {
+          // 노애드 — 다음 1점 따는 사람이 게임 가져감
+          next.isDeuce=false; next.pA=0; next.pB=0;
+          if(scorer==='A') next.gA++; else next.gB++;
+          return endGame(next, settings);
+        }
+        return next;
+      }
+
+      // 3. 일반 포인트
+      if(scorer==='A') next.pA++; else next.pB++;
+
+      // 3-1. 40-40 진입 → 듀스
+      if(next.pA===3 && next.pB===3){
+        next.isDeuce = true;
+        return next;
+      }
+      // 3-2. 누군가 40 이상이고 상대보다 2점 차이면 게임승
+      if(next.pA>=4 && next.pA - next.pB >= 2){
+        next.pA=0; next.pB=0; next.gA++;
+        return endGame(next, settings);
+      }
+      if(next.pB>=4 && next.pB - next.pA >= 2){
+        next.pA=0; next.pB=0; next.gB++;
+        return endGame(next, settings);
+      }
+      return next;
+    }
+
+    // 게임 종료 후 세트/타이브레이크 진입 여부 판단
+    function endGame(state, settings){
+      const {gamesPerSet, tiebreak, isFinalSet} = settings;
+      const {gA, gB} = state;
+
+      // 마지막 세트 매치 타이브레이크 모드 — gamesPerSet 무시, 10점 매치 타이브레이크
+      // (3판2선승의 3세트 또는 5판3선승의 5세트가 1-1 또는 2-2일 때)
+
+      // 일반 세트 종료
+      // 6게임 선승: 6-0~6-4 = 세트승, 5-5 → 7게임선승(6-5는 계속), 6-6 → 타이브레이크
+      const target = gamesPerSet;
+
+      if(gA === target && gB <= target - 2){
+        // 6-0 ~ 6-4 처럼 깔끔한 승
+        return endSet(state, 'A');
+      }
+      if(gB === target && gA <= target - 2){
+        return endSet(state, 'B');
+      }
+      // 5-5 상황: 한 게임 더 이어가서 7-5면 종료
+      if(gA === target + 1 && gB <= target - 1){
+        // 7-5
+        return endSet(state, 'A');
+      }
+      if(gB === target + 1 && gA <= target - 1){
+        return endSet(state, 'B');
+      }
+      // 6-6 또는 4-4 (4게임 선승의 경우) → 타이브레이크
+      if(tiebreak && gA === target && gB === target){
+        state.isTiebreak = true;
+        state.tbA = 0; state.tbB = 0;
+      }
+      return state;
+    }
+
+    // 세트 종료 처리
+    function endSet(state, winner){
+      if(winner==='A') state.sA++; else state.sB++;
+      state.gA = 0; state.gB = 0;
+      state.pA = 0; state.pB = 0;
+      state.advA = false; state.advB = false;
+      state.isDeuce = false;
+      state.isTiebreak = false;
+      state.tbA = 0; state.tbB = 0;
+      // 세트 히스토리 기록
+      if(!state.setHistory) state.setHistory = [];
+      // 마지막 세트 점수 (직전 게임 결과)
+      return state;
+    }
+
+    // 초기 테니스 상태
+    function initTennisState(){
+      return {
+        sA:0, sB:0,                    // 매치 세트 스코어
+        gA:0, gB:0,                    // 현재 세트 게임 스코어
+        pA:0, pB:0,                    // 현재 게임 포인트 (0~3 → 0/15/30/40)
+        advA:false, advB:false,        // 어드밴티지 보유 여부
+        isDeuce:false,                 // 듀스 상태
+        isTiebreak:false,              // 타이브레이크 진행 중
+        tbA:0, tbB:0,                  // 타이브레이크 점수
+        setHistory:[]                  // [{gA, gB}, ...] 완료된 세트 게임수
+      };
+    }
+
+    const TENNIS_CALL = ['love','fifteen','thirty','forty'];
+    // 일반 숫자 → 영어 단어 (0~99)
+    const ONES = ['zero','one','two','three','four','five','six','seven','eight','nine','ten',
+                  'eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen'];
+    const TENS = ['','','twenty','thirty','forty','fifty','sixty','seventy','eighty','ninety'];
+    function numWords(n){
+      n = Math.max(0, Math.floor(Number(n)||0));
+      if(n < 20) return ONES[n];
+      if(n < 100){ const t=Math.floor(n/10), o=n%10; return o ? TENS[t]+'-'+ONES[o] : TENS[t]; }
+      return String(n);
+    }
+
+    const VOICE_PREF_KEY = 'mm_scoreboard_voice';
+
+    // 🎾 서브권 계산 — 첫 서브(firstServer) 기준, 게임마다 교대.
+    //   타이브레이크는 첫 1포인트 후 2포인트씩 교대(정석 룰).
+    const otherSide = s => s==='A' ? 'B' : 'A';
+    function currentServerSide(state, firstServer){
+      if(!firstServer || firstServer==='skip' || !state) return null;
+      // 지금까지 완료된 총 게임 수 (이전 세트 + 현재 세트). 타이브레이크도 1게임으로 계산됨.
+      const done = (state.setHistory||[]).reduce((s,h)=>s+(h.gA||0)+(h.gB||0),0) + state.gA + state.gB;
+      const gameServer = (done % 2 === 0) ? firstServer : otherSide(firstServer);
+      if(state.isTiebreak){
+        const pts = (state.tbA||0) + (state.tbB||0);   // 지금 칠 포인트의 인덱스
+        const flipped = Math.floor((pts+1)/2) % 2 === 1; // 1-2-2-2… 교대
+        return flipped ? otherSide(gameServer) : gameServer;
+      }
+      return gameServer;
+    }
+
+    // 🏓🏸🏐 종목별 서버 계산 — 현재 세트의 점수로 '다음/직전 서브 측'을 반환.
+    //   firstServer: 이 매치의 첫 서브('A'|'B'|'skip'|null). 세트마다 첫 서버 교대.
+    //   completedSets: 완료된 세트 수(세트 시작 서버 교대용).
+    //   lastScorer: 직전 득점 측('A'|'B'|null) — 랠리 포인트제에서 사용.
+    function genServerSide(sport, firstServer, completedSets, curA, curB, lastScorer){
+      if(!firstServer || firstServer==='skip') return null;
+      // 세트마다 첫 서버 교대 (탁구·배구 관례). 짝수 세트→firstServer, 홀수→상대.
+      const setServer = ((completedSets||0) % 2 === 0) ? firstServer : otherSide(firstServer);
+      const a = Math.max(0, curA|0), b = Math.max(0, curB|0);
+      if(sport==='tabletennis'){
+        // 2점마다 교체, 단 10-10 듀스부터는 1점마다 교체.
+        const t = a + b;
+        const deuce = a>=10 && b>=10;
+        const changes = deuce ? (10 + (t - 20)) : Math.floor(t/2);
+        return (changes % 2 === 0) ? setServer : otherSide(setServer);
+      }
+      if(sport==='badminton' || sport==='volleyball' || sport==='pickleball'){
+        // 랠리 포인트제 — 직전 랠리 승자가 다음 서브(사이드아웃). 세트 시작은 setServer.
+        if(a===0 && b===0) return setServer;
+        return lastScorer || setServer;
+      }
+      return null;
+    }
+
+    const ScoreboardView = ({ match, config, onSave, onClose }) => {
+      const sm = isSetsGame(config?.sport);
+      const tn = isTennis(config?.sport);
+      const totalSets = config?.sets || 3;
+      const winSets   = Math.ceil(totalSets / 2);
+
+      // 🎾 테니스 설정
+      const tennisSettings = {
+        gamesPerSet: config?.tennisGamesPerSet || 6,
+        deuce: !!config?.tennisDeuce,
+        tiebreak: config?.tennisTiebreak !== false,
+        // 마지막 세트 매치 타이브레이크는 동적으로 계산 (현재 세트가 마지막일 때)
+        finalMatchTb: config?.tennisFinalMatchTb !== false
+      };
+
+      const [curSet,  setCurSet]  = useState(1);
+      const [scoreA,  setScoreA]  = useState(0); // 현재 세트 점수 (논리적 A = match.home)
+      const [scoreB,  setScoreB]  = useState(0); // 논리적 B = match.away
+      const [history, setHistory] = useState([]); // [{a,b}] 완료된 세트
+      const [saving,  setSaving]  = useState(false);
+      const [done,    setDone]    = useState(false);
+      const [courtSwapped, setCourtSwapped] = useState(false); // 좌우 자리 교체 (표시만)
+
+      // 🎾 테니스 전용 상태
+      const [tnState, setTnState] = useState(()=>initTennisState());
+
+      // 🔊 음성 스코어 리더 on/off (브라우저에 기억)
+      const [voiceOn, setVoiceOn] = useState(()=>{
+        try { const v = localStorage.getItem(VOICE_PREF_KEY); return v===null ? true : v==='1'; } catch(e){ return true; }
+      });
+      const toggleVoice = () => {
+        setVoiceOn(v=>{
+          const nv = !v;
+          try { localStorage.setItem(VOICE_PREF_KEY, nv?'1':'0'); } catch(e){}
+          if(nv) speakEnglish('Voice on'); // 사용자 제스처로 오디오 잠금 해제
+          else { try{ window.speechSynthesis && window.speechSynthesis.cancel(); }catch(e){} }
+          return nv;
+        });
+      };
+
+      // 🎾 첫 서브 팀 ('A'=home / 'B'=away). null이면 서브권 미지정(시작 시 선택).
+      const [firstServer, setFirstServer] = useState(null);
+      // 🏓🏸🏐 일반 종목 직전 득점 측('A'|'B') — 랠리 포인트제 서버 추적용
+      const [lastScorer, setLastScorer] = useState(null);
+
+      const wonA = tn ? tnState.sA : history.filter(s=>s.a>s.b).length;
+      const wonB = tn ? tnState.sB : history.filter(s=>s.b>s.a).length;
+      const matchOver = wonA>=winSets || wonB>=winSets;
+      const nameA = match?.home?.name || match?.participant1?.name || '홈';
+      const nameB = match?.away?.name || match?.participant2?.name || '원정';
+
+      // 화면 좌/우 표시 — courtSwapped 일 때 자리 바뀜 (점수도 따라감)
+      const leftName  = courtSwapped ? nameB  : nameA;
+      const rightName = courtSwapped ? nameA  : nameB;
+      const leftScore = courtSwapped ? scoreB : scoreA;
+      const rightScore= courtSwapped ? scoreA : scoreB;
+      const leftWon   = courtSwapped ? wonB   : wonA;
+      const rightWon  = courtSwapped ? wonA   : wonB;
+
+      // 🎾 테니스용 좌/우 값
+      const tnLeftSets    = courtSwapped ? tnState.sB : tnState.sA;
+      const tnRightSets   = courtSwapped ? tnState.sA : tnState.sB;
+      const tnLeftGames   = courtSwapped ? tnState.gB : tnState.gA;
+      const tnRightGames  = courtSwapped ? tnState.gA : tnState.gB;
+      // 현재 포인트 표시 (15/30/40/AD or 타이브레이크 점수)
+      let tnLeftPt = '0', tnRightPt = '0';
+      if(tnState.isTiebreak){
+        tnLeftPt = String(courtSwapped ? tnState.tbB : tnState.tbA);
+        tnRightPt = String(courtSwapped ? tnState.tbA : tnState.tbB);
+      } else if(tnState.isDeuce){
+        if(tnState.advA){ tnLeftPt = courtSwapped?'40':'AD'; tnRightPt = courtSwapped?'AD':'40'; }
+        else if(tnState.advB){ tnLeftPt = courtSwapped?'AD':'40'; tnRightPt = courtSwapped?'40':'AD'; }
+        else { tnLeftPt = '40'; tnRightPt = '40'; }
+      } else {
+        const pA = TENNIS_POINTS[tnState.pA] !== undefined ? TENNIS_POINTS[tnState.pA] : 40;
+        const pB = TENNIS_POINTS[tnState.pB] !== undefined ? TENNIS_POINTS[tnState.pB] : 40;
+        tnLeftPt = String(courtSwapped ? pB : pA);
+        tnRightPt = String(courtSwapped ? pA : pB);
+      }
+
+      // 🎾 현재 서브권 팀 + 화면 좌/우 서브 표시
+      const serverSide = tn
+        ? currentServerSide(tnState, firstServer)
+        : (sm ? genServerSide(config?.sport, firstServer, history.length, scoreA, scoreB, lastScorer) : null);
+      const serveLeft  = !!serverSide && (courtSwapped ? serverSide==='B' : serverSide==='A');
+      const serveRight = !!serverSide && (courtSwapped ? serverSide==='A' : serverSide==='B');
+      // 서브 표시용 종목 아이콘 + 첫 서브 안내 문구(종목별 교체 규칙)
+      const serveIcon = SPORTS_LIST.find(x=>x.id===config?.sport)?.icon || '🎾';
+      const serveRuleText = tn ? '서브권은 게임마다 자동으로 교대됩니다.'
+        : config?.sport==='tabletennis' ? '서브권은 2점마다 교대됩니다. (10-10 듀스부터 1점마다)'
+        : (config?.sport==='badminton'||config?.sport==='volleyball') ? '랠리(포인트)를 이긴 쪽이 다음 서브를 가져갑니다.'
+        : '서브권은 자동으로 교대됩니다.';
+
+      // 🔊 테니스 — tnState 변화 시 영어로 콜
+      const tnPrevRef = useRef(null);
+      const tnLastStateRef = useRef(null);
+      useEffect(()=>{
+        if(!tn) return;
+        // voiceOn/firstServer만 바뀌고 tnState는 그대로면 현재 점수 재낭독 방지
+        if(tnLastStateRef.current === tnState) return;
+        tnLastStateRef.current = tnState;
+        const prev = tnPrevRef.current;
+        tnPrevRef.current = { gA:tnState.gA, gB:tnState.gB, sA:tnState.sA, sB:tnState.sB };
+        if(!voiceOn || done) return;
+        if(!prev) return; // 첫 마운트는 읽지 않음
+        // 세트 종료 (= 게임 종료 포함)
+        if(tnState.sA > prev.sA || tnState.sB > prev.sB){
+          const winner = tnState.sA > prev.sA ? nameA : nameB;
+          const over = tnState.sA >= winSets || tnState.sB >= winSets;
+          speakEnglish(over ? `Game, set and match. ${winner}.` : `Set. ${winner}.`);
+          return;
+        }
+        // 게임 종료
+        if(tnState.gA > prev.gA || tnState.gB > prev.gB){
+          const winner = tnState.gA > prev.gA ? nameA : nameB;
+          speakEnglish(`Game. ${winner}.`);
+          return;
+        }
+        // 일반 포인트 콜 — 서브권 팀 점수부터. 서브권 미지정 시 화면 좌/우 순서.
+        const srv = currentServerSide(tnState, firstServer); // 'A'|'B'|null
+        // 두 값을 (서브측, 리시브측) 순서로 정렬해주는 헬퍼
+        const order = (valA, valB) => srv==='B'
+          ? [valB, valA]
+          : srv==='A'
+            ? [valA, valB]
+            : (courtSwapped ? [valB, valA] : [valA, valB]); // null=화면순서
+        let call = '';
+        if(tnState.isTiebreak){
+          if(tnState.tbA===0 && tnState.tbB===0) return; // 게임/세트 시작 직후
+          const [f,s] = order(tnState.tbA, tnState.tbB);
+          call = (f===s) ? `${numWords(f)} all` : `${numWords(f)} ${numWords(s)}`;
+        } else if(tnState.isDeuce){
+          if(tnState.advA) call = `Advantage. ${nameA}.`;
+          else if(tnState.advB) call = `Advantage. ${nameB}.`;
+          else call = 'Deuce';
+        } else {
+          if(tnState.pA===0 && tnState.pB===0) return; // 0-0은 콜 안 함
+          const cA = TENNIS_CALL[tnState.pA] || 'forty';
+          const cB = TENNIS_CALL[tnState.pB] || 'forty';
+          const [f,s] = order(cA, cB);
+          call = (tnState.pA===tnState.pB) ? `${f} all` : `${f} ${s}`;
+        }
+        speakEnglish(call);
+      }, [tnState, voiceOn, firstServer]);
+
+      // 🔊 일반 종목 — 점수 변화 시 영어로 콜.
+      //   서브권 종목(배드민턴·탁구·배구)은 '서버 점수 먼저'. 그 외/미지정은 화면 좌/우 순서.
+      const genPrevRef = useRef(null);
+      useEffect(()=>{
+        if(tn) return;
+        const prev = genPrevRef.current;
+        genPrevRef.current = { a:scoreA, b:scoreB };
+        if(!voiceOn || done) return;
+        if(!prev) return;                       // 첫 마운트
+        if(scoreA===prev.a && scoreB===prev.b) return;
+        if(scoreA===0 && scoreB===0) return;    // 세트 종료 리셋은 읽지 않음
+        // 직전 득점 측(랠리 승자) — prev 대비 어느 쪽이 올랐는지로 판정
+        const scorer = scoreA>prev.a ? 'A' : scoreB>prev.b ? 'B' : null;
+        // 서버 계산(세트제 종목만). 서버가 정해지면 서버 점수를 먼저 부른다.
+        const srv = sm ? genServerSide(config?.sport, firstServer, history.length, scoreA, scoreB, scorer) : null;
+        let f, r;
+        if(srv==='A'){ f = scoreA; r = scoreB; }
+        else if(srv==='B'){ f = scoreB; r = scoreA; }
+        else { f = courtSwapped ? scoreB : scoreA; r = courtSwapped ? scoreA : scoreB; } // 미지정=화면순서
+        speakEnglish(`${numWords(f)} ${numWords(r)}`);
+      }, [scoreA, scoreB, voiceOn]);
+
+      // 좌/우 클릭 시 어느 쪽 점수가 올라갈지
+      const adjLeft  = (delta) => adj(courtSwapped ? 'B' : 'A', delta);
+      const adjRight = (delta) => adj(courtSwapped ? 'A' : 'B', delta);
+
+      const adj = (side, delta) => {
+        if(matchOver||done) return;
+        // 🎾 테니스 분기
+        if(tn){
+          if(delta > 0){
+            // 마지막 세트 매치 타이브레이크 판정
+            const totalPlayed = tnState.sA + tnState.sB;
+            const isFinalSet = tennisSettings.finalMatchTb && totalPlayed === totalSets - 1 && totalSets > 1;
+            // 매치 타이브레이크는 첫 게임부터 타이브레이크 모드
+            const cur = {...tnState};
+            if(isFinalSet && cur.gA === 0 && cur.gB === 0 && !cur.isTiebreak){
+              cur.isTiebreak = true;
+              cur.tbA = 0; cur.tbB = 0;
+            }
+            const settings = {...tennisSettings, isFinalSet};
+            const next = tennisScorePoint(cur, settings, side);
+            // 세트가 완료됐는지 확인 (sA 또는 sB가 증가했는지)
+            if(next.sA > tnState.sA || next.sB > tnState.sB){
+              // 세트 종료 — 게임수 히스토리 기록
+              const finishedSetGames = {gA: tnState.gA + (side==='A'?1:0), gB: tnState.gB + (side==='B'?1:0)};
+              // 실제로는 endGame이 끝나면서 gA/gB가 리셋되기 전 값 필요 → 다른 방식 사용
+              // tnState에서 endSet 직전 값을 알 수 없으니, next의 setHistory에 추가
+              if(!next.setHistory) next.setHistory = [...(tnState.setHistory||[])];
+              else next.setHistory = [...(tnState.setHistory||[]), ...next.setHistory.slice((tnState.setHistory||[]).length)];
+              // 직전 게임수 추적 — 마지막 게임 직전 상태 + 1
+              const lastA = tnState.gA + (side==='A'? (cur.isDeuce||cur.isTiebreak||cur.pA>=3?1:0) : 0);
+              const lastB = tnState.gB + (side==='B'? (cur.isDeuce||cur.isTiebreak||cur.pB>=3?1:0) : 0);
+              // 더 안전하게: tennisScorePoint 직전의 gA, gB를 next의 setHistory에 추가
+              const sh = [...(tnState.setHistory||[])];
+              // 어느 쪽이 세트승했는지로 결정
+              if(next.sA > tnState.sA){
+                // A가 세트 승 → 마지막 게임 = A 승
+                sh.push({gA: cur.gA + 1, gB: cur.gB});
+              } else {
+                sh.push({gA: cur.gA, gB: cur.gB + 1});
+              }
+              next.setHistory = sh;
+              // 매치 종료 시 firebase 저장
+              if(next.sA >= winSets || next.sB >= winSets){
+                setTnState(next);
+                saveToFirebaseTennis(next, false);
+                return;
+              }
+              // 일반 세트 종료 — 중간 저장
+              setTnState(next);
+              saveToFirebaseTennis(next, false);
+              return;
+            }
+            setTnState(next);
+          } else {
+            // -1: 마지막 포인트 취소 (간단 구현 — 포인트 한 단계 되돌리기)
+            // 정확한 되돌리기는 복잡하므로 일단 현재 포인트만 -1
+            const next = {...tnState};
+            if(next.isTiebreak){
+              if(side==='A' && next.tbA>0) next.tbA--;
+              if(side==='B' && next.tbB>0) next.tbB--;
+            } else if(next.isDeuce){
+              if(side==='A' && next.advA) next.advA = false;
+              else if(side==='B' && next.advB) next.advB = false;
+              else if(!next.advA && !next.advB){
+                // 듀스 → 30-30 으로 (한 명만 한 단계 내림)
+                next.isDeuce = false;
+                if(side==='A') next.pA = 2;
+                if(side==='B') next.pB = 2;
+              }
+            } else {
+              if(side==='A' && next.pA>0) next.pA--;
+              if(side==='B' && next.pB>0) next.pB--;
+            }
+            setTnState(next);
+          }
+          return;
+        }
+        // 일반 종목
+        if(delta>0) setLastScorer(side);   // 직전 득점 측 = 다음 서버(랠리 포인트제)
+        if(side==='A') setScoreA(v=>Math.max(0,v+delta));
+        else           setScoreB(v=>Math.max(0,v+delta));
+      };
+
+      const endSet = () => {
+        if(scoreA===0&&scoreB===0){alert('점수를 먼저 입력하세요.');return;}
+        const newHistory=[...history,{a:scoreA,b:scoreB}];
+        setHistory(newHistory);
+        setScoreA(0); setScoreB(0);
+        setLastScorer(null);              // 새 세트 — 서버는 세트 시작 규칙으로 리셋
+        setCurSet(v=>v+1);
+        // 세트 종료 후 Firebase에 중간 저장
+        saveToFirebase(newHistory, false);
+      };
+
+
+      // ── 결과 저장 — Firebase 대신 KDK 라운드 점수 콜백 ──
+      const commitSave = (hist, isFinal) => {
+        const sA = hist.filter(s => s.a > s.b).length;
+        const sB = hist.filter(s => s.b > s.a).length;
+        const over = sA >= winSets || sB >= winSets;
+        if (!isFinal && !over) return;            // 아직 매치 안 끝났으면 무시(중간 표시만)
+        const last = hist[hist.length - 1] || { a: scoreA, b: scoreB };
+        setDone(true);
+        if (onSave) onSave(last.a, last.b);       // 단판: 그 게임의 점수를 라운드 점수로
+      };
+      const saveToFirebaseTennis = (state, isFinal) => {
+        const sh = state.setHistory || [];
+        const histLike = sh.map(s => ({ a: s.gA, b: s.gB }));
+        setHistory(histLike);
+        commitSave(histLike, isFinal);
+      };
+      const saveToFirebase = (hist, isFinal) => { commitSave(hist, isFinal); };
+
+
+      const finishMatch = () => {
+        if(!matchOver){alert(`경기가 아직 끝나지 않았습니다.\n현재 ${wonA}:${wonB} (${winSets}세트 선승)`);return;}
+        if(!window.confirm('경기를 완전히 종료하고 결과를 저장합니까?'))return;
+        if(tn) saveToFirebaseTennis(tnState, true);
+        else saveToFirebase(history, true);
+      };
+
+      const getScoreColor=(isA)=>{
+        if(matchOver){return isA?(wonA>wonB?'text-green-400':'text-red-400'):(wonB>wonA?'text-green-400':'text-red-400');}
+        return 'text-white';
+      };
+
+      if(done) return (
+        <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center gap-6 p-8 text-white">
+          <span className="text-6xl">🏆</span>
+          <h2 className="text-3xl font-black text-center">{wonA>wonB?nameA:nameB} 승!</h2>
+          <p className="text-slate-400 font-bold text-xl">{wonA} : {wonB} 세트</p>
+          <p className="text-slate-500 text-base">결과가 저장됐습니다.</p>
+        </div>
+      );
+
+      return (
+        <div className="min-h-screen bg-slate-900 flex flex-col select-none relative" style={{touchAction:'manipulation'}}>
+          {/* 🏓🏸🏐🎾 첫 서브 선택 — 세트제(서브권) 종목에서 미지정 시 시작 화면 */}
+          {sm && firstServer===null && !done && (
+            <div className="absolute inset-0 z-50 bg-slate-900/95 flex flex-col items-center justify-center gap-6 sm:gap-8 p-6">
+              <div className="text-center">
+                <p className="text-5xl sm:text-6xl mb-3">{serveIcon}</p>
+                <p className="text-white font-black text-2xl sm:text-3xl">첫 서브는 누구?</p>
+                <p className="text-slate-400 font-bold text-sm sm:text-base mt-2">{serveRuleText}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3 sm:gap-4 w-full max-w-2xl">
+                <button onClick={()=>setFirstServer('A')}
+                  className="py-8 sm:py-12 rounded-2xl bg-blue-600 hover:bg-blue-500 active:scale-95 transition-all text-white font-black text-xl sm:text-3xl break-all px-3">{nameA}</button>
+                <button onClick={()=>setFirstServer('B')}
+                  className="py-8 sm:py-12 rounded-2xl bg-rose-600 hover:bg-rose-500 active:scale-95 transition-all text-white font-black text-xl sm:text-3xl break-all px-3">{nameB}</button>
+              </div>
+              <button onClick={()=>setFirstServer('skip')}
+                className="text-slate-500 hover:text-slate-300 text-sm font-bold underline underline-offset-4">서브권 표시 없이 시작</button>
+            </div>
+          )}
+          {/* 상단 — 대회명 + 닫기 (얇게) */}
+          <div className="bg-slate-800 px-3 sm:px-6 py-2 flex justify-between items-center shrink-0 gap-2 sm:gap-4">
+            <div className="min-w-0 flex items-baseline gap-1.5 sm:gap-3">
+              <p className="text-xs sm:text-sm font-black text-slate-300 truncate">{config?.name}</p>
+              <p className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest shrink-0">{match._slotLabel&&<span className="text-amber-400 mr-1">{match._slotLabel}</span>}{sm?`${totalSets===1?'단판':totalSets+'판 '+winSets+'선승'}`:''} {match.court?`· ${match.court}코트`:''}</p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {/* 🔊 음성 스코어 리더 on/off — 포인트 시 영어로 점수 콜 */}
+              <button onClick={toggleVoice}
+                className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center text-base sm:text-lg active:scale-90 transition-all ${voiceOn?'bg-blue-600 hover:bg-blue-500 text-white':'bg-slate-700 hover:bg-slate-600 text-slate-400'}`}
+                title={voiceOn?'음성 콜 끄기 (영어)':'음성 콜 켜기 (영어)'}>
+                {voiceOn?'🔊':'🔇'}
+              </button>
+              {onClose&&(
+                <button onClick={onClose}
+                  className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-slate-700 hover:bg-slate-600 text-white flex items-center justify-center text-base sm:text-lg active:scale-90 transition-all" title="닫기">✕</button>
+              )}
+            </div>
+          </div>
+
+          {/* 선수명 — 헤더 바로 아래 */}
+          <div className="bg-slate-900 grid grid-cols-2 divide-x divide-slate-700 shrink-0 border-b border-slate-800">
+            <div className="text-center py-3 sm:py-4">
+              <p className="text-white font-black text-xl sm:text-3xl md:text-4xl leading-tight break-all px-2">
+                {serveLeft&&<span className="text-amber-400 mr-1.5" title="서브권">{serveIcon}</span>}{leftName}
+              </p>
+            </div>
+            <div className="text-center py-3 sm:py-4">
+              <p className="text-white font-black text-xl sm:text-3xl md:text-4xl leading-tight break-all px-2">
+                {serveRight&&<span className="text-amber-400 mr-1.5" title="서브권">{serveIcon}</span>}{rightName}
+              </p>
+            </div>
+          </div>
+
+          {/* 메인 — 🎾 테니스 / 일반 세트제 / 비세트제 분기 */}
+          {tn ? (
+            /* 🎾 테니스 스코어보드 — [포인트 · 게임 · 세트 | 세트 · 게임 · 포인트] */
+            <div className="flex-1 grid grid-cols-[1fr_auto_auto_auto_auto_1fr] divide-x divide-slate-700 items-stretch">
+              {/* 좌측 포인트 — 거대, 탭하여 +1 */}
+              <button onPointerDown={()=>adjLeft(1)}
+                className={`flex flex-col items-center justify-center py-4 sm:py-6 active:bg-blue-900/40 transition-colors ${matchOver&&leftWon>rightWon?'bg-green-900/15':''}`}>
+                <div className={`font-black tabular-nums leading-none ${getScoreColor(!courtSwapped)}`} style={{fontSize: tnLeftPt==='AD' ? 'min(20vw,14rem)' : 'min(26vw,18rem)'}}>
+                  {tnLeftPt}
+                </div>
+                <div className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest mt-2 sm:mt-4">
+                  {tnState.isTiebreak ? '타이브레이크' : '탭하여 포인트'}
+                </div>
+              </button>
+
+              {/* 좌측 게임수 */}
+              <div className="flex flex-col items-center justify-center px-1.5 sm:px-3 md:px-5 bg-slate-950/30">
+                <p className="text-[9px] sm:text-[11px] font-black text-blue-300/60 uppercase tracking-widest mb-1 sm:mb-2">게임</p>
+                <div className="font-black text-blue-300 tabular-nums leading-none" style={{fontSize:'min(10vw,6rem)'}}>{tnLeftGames}</div>
+              </div>
+
+              {/* 좌측 세트 승수 */}
+              <div className="flex flex-col items-center justify-center px-1.5 sm:px-3 md:px-5 bg-slate-950/60">
+                <p className="text-[9px] sm:text-[11px] font-black text-amber-300/60 uppercase tracking-widest mb-1 sm:mb-2">세트</p>
+                <div className="font-black text-amber-300 tabular-nums leading-none" style={{fontSize:'min(10vw,6rem)'}}>{tnLeftSets}</div>
+              </div>
+
+              {/* 우측 세트 승수 */}
+              <div className="flex flex-col items-center justify-center px-1.5 sm:px-3 md:px-5 bg-slate-950/60">
+                <p className="text-[9px] sm:text-[11px] font-black text-amber-300/60 uppercase tracking-widest mb-1 sm:mb-2">세트</p>
+                <div className="font-black text-amber-300 tabular-nums leading-none" style={{fontSize:'min(10vw,6rem)'}}>{tnRightSets}</div>
+              </div>
+
+              {/* 우측 게임수 */}
+              <div className="flex flex-col items-center justify-center px-1.5 sm:px-3 md:px-5 bg-slate-950/30">
+                <p className="text-[9px] sm:text-[11px] font-black text-blue-300/60 uppercase tracking-widest mb-1 sm:mb-2">게임</p>
+                <div className="font-black text-blue-300 tabular-nums leading-none" style={{fontSize:'min(10vw,6rem)'}}>{tnRightGames}</div>
+              </div>
+
+              {/* 우측 포인트 */}
+              <button onPointerDown={()=>adjRight(1)}
+                className={`flex flex-col items-center justify-center py-4 sm:py-6 active:bg-rose-900/40 transition-colors ${matchOver&&rightWon>leftWon?'bg-green-900/15':''}`}>
+                <div className={`font-black tabular-nums leading-none ${getScoreColor(courtSwapped)}`} style={{fontSize: tnRightPt==='AD' ? 'min(20vw,14rem)' : 'min(26vw,18rem)'}}>
+                  {tnRightPt}
+                </div>
+                <div className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest mt-2 sm:mt-4">
+                  {tnState.isTiebreak ? '타이브레이크' : '탭하여 포인트'}
+                </div>
+              </button>
+            </div>
+          ) : sm ? (
+            <div className="flex-1 grid grid-cols-[1fr_auto_auto_1fr] divide-x divide-slate-700 items-stretch">
+              {/* 좌측 점수 — 거대, 탭하여 +1 */}
+              <button onPointerDown={()=>adjLeft(1)}
+                className={`flex flex-col items-center justify-center py-4 sm:py-6 active:bg-blue-900/40 transition-colors ${matchOver&&leftWon>rightWon?'bg-green-900/15':''}`}>
+                <div className={`font-black tabular-nums leading-none ${getScoreColor(!courtSwapped)}`} style={{fontSize:'min(28vw,20rem)'}}>
+                  {leftScore}
+                </div>
+                <div className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest mt-2 sm:mt-4">탭하여 +1</div>
+              </button>
+
+              {/* 좌측 세트 승수 */}
+              <div className="flex flex-col items-center justify-center px-2 sm:px-4 md:px-8 bg-slate-950/50">
+                <p className="text-[9px] sm:text-[11px] font-black text-amber-300/60 uppercase tracking-widest mb-1 sm:mb-2">세트</p>
+                <div className="font-black text-amber-300 tabular-nums leading-none" style={{fontSize:'min(12vw,8rem)'}}>{leftWon}</div>
+              </div>
+
+              {/* 우측 세트 승수 */}
+              <div className="flex flex-col items-center justify-center px-2 sm:px-4 md:px-8 bg-slate-950/50">
+                <p className="text-[9px] sm:text-[11px] font-black text-amber-300/60 uppercase tracking-widest mb-1 sm:mb-2">세트</p>
+                <div className="font-black text-amber-300 tabular-nums leading-none" style={{fontSize:'min(12vw,8rem)'}}>{rightWon}</div>
+              </div>
+
+              {/* 우측 점수 — 거대, 탭하여 +1 */}
+              <button onPointerDown={()=>adjRight(1)}
+                className={`flex flex-col items-center justify-center py-4 sm:py-6 active:bg-rose-900/40 transition-colors ${matchOver&&rightWon>leftWon?'bg-green-900/15':''}`}>
+                <div className={`font-black tabular-nums leading-none ${getScoreColor(courtSwapped)}`} style={{fontSize:'min(28vw,20rem)'}}>
+                  {rightScore}
+                </div>
+                <div className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest mt-2 sm:mt-4">탭하여 +1</div>
+              </button>
+            </div>
+          ) : (
+            /* 비세트 종목 — 양쪽 거대 점수만 */
+            <div className="flex-1 grid grid-cols-2 divide-x divide-slate-700">
+              <button onPointerDown={()=>adjLeft(1)}
+                className={`flex flex-col items-center justify-center active:bg-blue-900/40 transition-colors ${matchOver&&leftWon>rightWon?'bg-green-900/15':''}`}>
+                <div className={`font-black tabular-nums leading-none ${getScoreColor(!courtSwapped)}`} style={{fontSize:'min(35vw,24rem)'}}>{leftScore}</div>
+                <div className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest mt-2 sm:mt-4">탭하여 +1</div>
+              </button>
+              <button onPointerDown={()=>adjRight(1)}
+                className={`flex flex-col items-center justify-center active:bg-rose-900/40 transition-colors ${matchOver&&rightWon>leftWon?'bg-green-900/15':''}`}>
+                <div className={`font-black tabular-nums leading-none ${getScoreColor(courtSwapped)}`} style={{fontSize:'min(35vw,24rem)'}}>{rightScore}</div>
+                <div className="text-[10px] sm:text-[12px] font-black text-slate-500 uppercase tracking-widest mt-2 sm:mt-4">탭하여 +1</div>
+              </button>
+            </div>
+          )}
+
+          {/* 차감 + 코트 체인지 버튼 */}
+          <div className="grid grid-cols-[1fr_auto_1fr] gap-2 sm:gap-3 px-2 sm:px-3 pt-2 sm:pt-3 bg-slate-900 shrink-0">
+            <button onPointerDown={e=>{e.stopPropagation();adjLeft(-1);}}
+              className="py-2 sm:py-3 rounded-xl sm:rounded-2xl bg-slate-800 hover:bg-slate-700 text-white text-2xl sm:text-3xl font-black active:scale-95 transition-all flex items-center justify-center">−</button>
+            <button onClick={()=>setCourtSwapped(s=>!s)}
+              className="px-3 sm:px-4 py-2 sm:py-3 rounded-xl sm:rounded-2xl bg-amber-600 hover:bg-amber-500 text-white text-sm sm:text-base font-black active:scale-95 transition-all flex items-center justify-center gap-1" title="코트 체인지 — 좌우 자리 교체">
+              🔄 <span className="hidden sm:inline">코트</span>
+            </button>
+            <button onPointerDown={e=>{e.stopPropagation();adjRight(-1);}}
+              className="py-2 sm:py-3 rounded-xl sm:rounded-2xl bg-slate-800 hover:bg-slate-700 text-white text-2xl sm:text-3xl font-black active:scale-95 transition-all flex items-center justify-center">−</button>
+          </div>
+          {/* 하단 — 세트 히스토리 + 버튼 */}
+          <div className="bg-slate-800 px-3 sm:px-6 py-3 sm:py-4 space-y-2 sm:space-y-3 shrink-0">
+            {tn ? (
+              /* 🎾 테니스 히스토리 — 완료된 세트의 게임수 표시 */
+              (tnState.setHistory||[]).length>0&&(
+                <div className="flex gap-1.5 sm:gap-3 justify-center flex-wrap">
+                  {(tnState.setHistory||[]).map((s,i)=>(
+                    <div key={i} className="text-center bg-slate-900 px-2 sm:px-3 py-1 rounded-lg">
+                      <p className="text-[9px] sm:text-[11px] text-slate-400 font-black uppercase">{i+1}세트</p>
+                      <p className={`text-sm sm:text-lg font-black ${s.gA>s.gB?'text-green-400':'text-rose-400'}`}>{s.gA} : {s.gB}</p>
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : (
+              history.length>0&&(
+                <div className="flex gap-1.5 sm:gap-3 justify-center flex-wrap">
+                  {history.map((s,i)=>(
+                    <div key={i} className="text-center bg-slate-900 px-2 sm:px-3 py-1 rounded-lg">
+                      <p className="text-[9px] sm:text-[11px] text-slate-400 font-black uppercase">{i+1}세트</p>
+                      <p className={`text-sm sm:text-lg font-black ${s.a>s.b?'text-green-400':'text-rose-400'}`}>{s.a} : {s.b}</p>
+                    </div>
+                  ))}
+                </div>
+              )
+            )}
+            <div className="flex gap-2 sm:gap-3">
+              {sm&&!tn&&!matchOver&&(
+                <button onClick={endSet} disabled={saving}
+                  className="flex-1 py-3 sm:py-5 bg-amber-500 text-white rounded-xl sm:rounded-2xl font-black text-base sm:text-lg active:bg-amber-400 active:scale-95 transition-all">
+                  {saving?'저장 중...':'✅ 세트 종료'}
+                </button>
+              )}
+              <button onClick={finishMatch} disabled={saving}
+                className={`flex-1 py-3 sm:py-5 rounded-xl sm:rounded-2xl font-black text-base sm:text-lg transition-all active:scale-95 ${matchOver?'bg-green-600 text-white active:bg-green-500':'bg-slate-600 text-slate-400'}`}>
+                {saving?'저장 중...':matchOver?'🏆 경기 종료 저장':'경기 종료'}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
     // ── 라운드 표 (한 그룹) ──────────────────────────────────
-    function GroupSchedule({ group, result, options, courtLabel, scores, onScore }) {
+    function GroupSchedule({ group, result, options, courtLabel, scores, onScore, onScoreboard }) {
       const c = COLORS[group.color] || COLORS.blue;
       const r = result;
       const sc = scores || {};
@@ -271,6 +1019,8 @@
                               onChange={e => onScore && onScore(rd.round, 'b', e.target.value)}
                               inputMode="numeric" maxLength={3}
                               className="w-9 h-7 border border-slate-300 rounded text-center text-xs font-bold focus:border-indigo-500 outline-none" placeholder="-" />
+                            <button onClick={() => onScoreboard && onScoreboard(rd)} title="스코어보드로 입력"
+                              className="no-print ml-1 w-7 h-7 rounded-lg bg-slate-800 text-white hover:bg-slate-900 active:scale-95 text-sm leading-none">🏓</button>
                           </span>
                         </td>
                       )}
@@ -308,6 +1058,8 @@
       const [options, setOptions] = useState({ score: true, printMode: 'each', mode: 'full', gamesPerPlayer: 5, seed: 2025 });
       const [scores, setScores] = useState({}); // { [groupId]: { [round]: {a, b} } }
       const [results, setResults] = useState(null); // [{group, result, courtLabel}]
+      const [sb, setSb] = useState(null); // 스코어보드 { groupId, round, teamA, teamB, init }
+      const [voiceOn, setVoiceOn] = useState(true); // 영어 음성 콜
       const firstLoad = useRef(true);
 
       // 로드/저장
@@ -319,14 +1071,15 @@
             if (Array.isArray(data.groups) && data.groups.length) setGroups(data.groups);
             if (data.options) setOptions(o => ({ ...o, ...data.options }));
             if (data.scores) setScores(data.scores);
+            if (typeof data.voiceOn === 'boolean') setVoiceOn(data.voiceOn);
           }
         } catch (e) {}
         firstLoad.current = false;
       }, []);
       useEffect(() => {
         if (firstLoad.current) return;
-        try { localStorage.setItem(LS_KEY, JSON.stringify({ groups, options, scores })); } catch (e) {}
-      }, [groups, options, scores]);
+        try { localStorage.setItem(LS_KEY, JSON.stringify({ groups, options, scores, voiceOn })); } catch (e) {}
+      }, [groups, options, scores, voiceOn]);
 
       function setScore(groupId, round, side, val) {
         const clean = String(val).replace(/[^0-9]/g, '').slice(0, 3);
@@ -513,13 +1266,32 @@
                 <GroupSchedule key={o.group.id} group={o.group} result={o.result}
                   options={options} courtLabel={o.courtLabel}
                   scores={scores[o.group.id] || {}}
-                  onScore={(round, side, val) => setScore(o.group.id, round, side, val)} />
+                  onScore={(round, side, val) => setScore(o.group.id, round, side, val)}
+                  onScoreboard={(rd) => setSb({
+                    groupId: o.group.id, groupName: o.group.name, round: rd.round,
+                    teamA: rd.teamA, teamB: rd.teamB,
+                  })} />
               ))}
 
               <div className="no-print text-center text-[12px] text-slate-400 font-medium py-6">
                 MatchMaker Pro · KDK 방식 (라운드 로빈 복식) — 알고리즘 검증됨
                 {options.mode === 'fixed' ? ' · 인당 ' + options.gamesPerPlayer + '게임 고정' : ' · 모든 파트너 1회'}
               </div>
+            </div>
+          )}
+
+          {/* 🏓 스코어보드 (메인 앱 스코어보드 이식) */}
+          {sb && (
+            <div className="fixed inset-0 z-50 overflow-auto">
+              <ScoreboardView
+                match={{ home: { name: sb.teamA.join(' · ') }, away: { name: sb.teamB.join(' · ') }, court: '' }}
+                config={{ name: (sb.groupName || '') + ' · ' + sb.round + '경기', sport: 'pickleball', sets: 1 }}
+                onSave={(a, b) => {
+                  setScore(sb.groupId, sb.round, 'a', String(a));
+                  setScore(sb.groupId, sb.round, 'b', String(b));
+                  setSb(null);
+                }}
+                onClose={() => setSb(null)} />
             </div>
           )}
         </div>
