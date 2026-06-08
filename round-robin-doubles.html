@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Round Robin Doubles — 복식 라운드 로빈 · MatchMaker Pro</title>
+  <meta name="description" content="피클볼 수업용 라운드 로빈 복식 로테이션 자동 생성기" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icons/favicon-64.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;500;700;900&display=swap');
+    body { font-family: 'Noto Sans KR', system-ui, sans-serif; }
+    .font-display { font-family: 'Black Han Sans', 'Noto Sans KR', sans-serif; }
+    /* ── 인쇄 ── */
+    @media print {
+      .no-print { display: none !important; }
+      body { background: #fff !important; }
+      .print-area { box-shadow: none !important; }
+      .group-page { break-inside: avoid; page-break-inside: avoid; }
+      .group-page.page-each { break-after: page; page-break-after: always; }
+      .group-page.page-each:last-child { break-after: auto; page-break-after: auto; }
+    }
+  </style>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-800">
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- 순수 알고리즘 (Node 테스트와 공유) -->
+  <script src="round-robin-doubles.js"></script>
+
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useRef } = React;
+    const RRD = window.RoundRobinDoubles;
+    const LS_KEY = 'mmpro_rr_doubles_v1';
+
+    // 기본 그룹 (수업 맥락: 여자2·남자2 그룹)
+    const DEFAULT_GROUPS = [
+      { id: 'g1', name: '여자 1조', color: 'rose',    roster: '' },
+      { id: 'g2', name: '여자 2조', color: 'pink',    roster: '' },
+      { id: 'g3', name: '남자 1조', color: 'blue',    roster: '' },
+      { id: 'g4', name: '남자 2조', color: 'indigo',  roster: '' },
+    ];
+
+    const COLORS = {
+      rose:   { head: 'from-rose-500 to-rose-600',     soft: 'bg-rose-50 border-rose-200',     text: 'text-rose-700',   ring: 'focus:border-rose-500' },
+      pink:   { head: 'from-pink-500 to-fuchsia-600',  soft: 'bg-pink-50 border-pink-200',     text: 'text-pink-700',   ring: 'focus:border-pink-500' },
+      blue:   { head: 'from-blue-500 to-blue-600',     soft: 'bg-blue-50 border-blue-200',     text: 'text-blue-700',   ring: 'focus:border-blue-500' },
+      indigo: { head: 'from-indigo-500 to-violet-600', soft: 'bg-indigo-50 border-indigo-200', text: 'text-indigo-700', ring: 'focus:border-indigo-500' },
+      teal:   { head: 'from-teal-500 to-emerald-600',  soft: 'bg-teal-50 border-teal-200',     text: 'text-teal-700',   ring: 'focus:border-teal-500' },
+      amber:  { head: 'from-amber-500 to-orange-600',  soft: 'bg-amber-50 border-amber-200',   text: 'text-amber-700',  ring: 'focus:border-amber-500' },
+    };
+    const COLOR_CYCLE = ['rose','pink','blue','indigo','teal','amber'];
+
+    function rosterToNames(roster) {
+      return (roster || '')
+        .split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+    }
+
+    // ── 그룹 입력 카드 ───────────────────────────────────────
+    function GroupCard({ group, index, onChange, onRemove, canRemove }) {
+      const c = COLORS[group.color] || COLORS.blue;
+      const count = rosterToNames(group.roster).length;
+      return (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className={`bg-gradient-to-r ${c.head} px-4 py-2.5 flex items-center gap-2`}>
+            <span className="text-white/80 font-black text-sm">조 {index + 1}</span>
+            <input
+              value={group.name}
+              onChange={e => onChange({ ...group, name: e.target.value })}
+              className="flex-1 bg-white/20 text-white placeholder-white/60 font-black px-3 py-1 rounded-lg outline-none focus:bg-white/30"
+              placeholder="그룹명"
+            />
+            <span className="text-white font-black text-xs bg-white/20 px-2 py-0.5 rounded-full">{count}명</span>
+            {canRemove && (
+              <button onClick={onRemove} title="그룹 삭제"
+                className="text-white/80 hover:text-white hover:bg-white/20 w-7 h-7 rounded-full font-black">✕</button>
+            )}
+          </div>
+          <div className="p-3">
+            <textarea
+              value={group.roster}
+              onChange={e => onChange({ ...group, roster: e.target.value })}
+              rows={6}
+              placeholder={"학생 이름을 한 줄에 한 명씩 입력\n예)\n김민준\n이서연\n박도윤\n..."}
+              className={`w-full text-sm border-2 border-slate-200 rounded-xl px-3 py-2 outline-none resize-y ${c.ring}`}
+            />
+            <div className="flex items-center justify-between mt-1.5">
+              <span className={`text-[11px] font-bold ${count < 4 ? 'text-red-500' : count > 8 ? 'text-amber-600' : c.text}`}>
+                {count < 4 ? `⚠ 최소 4명 필요 (현재 ${count}명)` :
+                 count > 8 ? `${count}명 — 권장 7~8명, 라운드가 많아집니다` :
+                 `${count}명 · 권장 인원`}
+              </span>
+              <div className="flex gap-1">
+                {COLOR_CYCLE.map(col => (
+                  <button key={col} onClick={() => onChange({ ...group, color: col })}
+                    className={`w-4 h-4 rounded-full bg-gradient-to-br ${COLORS[col].head} ${group.color === col ? 'ring-2 ring-offset-1 ring-slate-400' : ''}`} />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── 라운드 표 (한 그룹) ──────────────────────────────────
+    function GroupSchedule({ group, result, options, courtLabel }) {
+      const c = COLORS[group.color] || COLORS.blue;
+      const r = result;
+      if (!r) return null;
+
+      return (
+        <div className={`group-page ${options.printMode === 'each' ? 'page-each' : ''} bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden print-area mb-6`}>
+          <div className={`bg-gradient-to-r ${c.head} px-5 py-3 flex items-center justify-between flex-wrap gap-2`}>
+            <div className="flex items-center gap-2">
+              <span className="text-white font-display text-xl">{group.name}</span>
+              <span className="text-white/80 text-sm font-bold">· 라운드 로빈 복식</span>
+            </div>
+            <div className="flex items-center gap-2 text-white text-xs font-bold">
+              <span className="bg-white/20 px-2 py-1 rounded-lg">{r.k}명</span>
+              <span className="bg-white/20 px-2 py-1 rounded-lg">{r.rounds.length}라운드</span>
+              {courtLabel && <span className="bg-white/25 px-2 py-1 rounded-lg">🏟 {courtLabel}</span>}
+            </div>
+          </div>
+
+          {/* 경고 */}
+          {r.warnings.length > 0 && (
+            <div className="px-5 pt-3 space-y-1">
+              {r.warnings.map((w, i) => (
+                <p key={i} className="text-[12px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">⚠ {w}</p>
+              ))}
+            </div>
+          )}
+
+          {r.rounds.length === 0 ? (
+            <div className="p-6 text-center text-slate-400 font-bold">학생 4명 이상을 입력하세요.</div>
+          ) : (
+            <div className="p-3 sm:p-4 overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="text-[11px] uppercase tracking-wider text-slate-400 font-black">
+                    <th className="text-center py-2 px-2 w-12">R</th>
+                    <th className="text-right py-2 px-2">팀 A</th>
+                    <th className="text-center py-2 px-1 w-10">vs</th>
+                    <th className="text-left py-2 px-2">팀 B</th>
+                    <th className="text-left py-2 px-2">대기</th>
+                    {options.score && <th className="text-center py-2 px-2 w-24 no-print-keep">점수</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {r.rounds.map(rd => (
+                    <tr key={rd.round} className="border-t border-slate-100">
+                      <td className="text-center py-2.5 px-2">
+                        <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full ${c.soft} ${c.text} font-black text-xs`}>{rd.round}</span>
+                      </td>
+                      <td className="text-right py-2.5 px-2 font-bold text-slate-800 whitespace-nowrap">{rd.teamA.join(' · ')}</td>
+                      <td className="text-center py-2.5 px-1 text-slate-300 font-black text-xs">vs</td>
+                      <td className="text-left py-2.5 px-2 font-bold text-slate-800 whitespace-nowrap">{rd.teamB.join(' · ')}</td>
+                      <td className="text-left py-2.5 px-2 text-[12px] text-slate-400">{rd.waiting.length ? rd.waiting.join(', ') : '—'}</td>
+                      {options.score && (
+                        <td className="text-center py-2 px-2">
+                          <span className="inline-flex items-center gap-1">
+                            <input className="w-9 h-7 border border-slate-300 rounded text-center text-xs" placeholder="-" />
+                            <span className="text-slate-300">:</span>
+                            <input className="w-9 h-7 border border-slate-300 rounded text-center text-xs" placeholder="-" />
+                          </span>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* 선수별 요약 */}
+              <details className="mt-3 group/sum">
+                <summary className="cursor-pointer text-[12px] font-black text-slate-400 hover:text-slate-600 list-none select-none">
+                  ▸ 선수별 출전·파트너 요약
+                </summary>
+                <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  {r.perPlayer.map(p => (
+                    <div key={p.name} className={`text-[12px] rounded-lg px-3 py-1.5 ${c.soft} border`}>
+                      <span className="font-black">{p.name}</span>
+                      <span className="text-slate-500"> — {p.games}게임 / 대기 {p.byes}회 · 파트너 {p.partners.length}명 · 상대 {p.opponents.length}명</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ── 메인 앱 ──────────────────────────────────────────────
+    function App() {
+      const [groups, setGroups] = useState(DEFAULT_GROUPS);
+      const [options, setOptions] = useState({ score: false, printMode: 'each', limitRounds: false, maxRounds: 8, seed: 2025 });
+      const [results, setResults] = useState(null); // [{group, result, courtLabel}]
+      const firstLoad = useRef(true);
+
+      // 로드/저장
+      useEffect(() => {
+        try {
+          const raw = localStorage.getItem(LS_KEY);
+          if (raw) {
+            const data = JSON.parse(raw);
+            if (Array.isArray(data.groups) && data.groups.length) setGroups(data.groups);
+            if (data.options) setOptions(o => ({ ...o, ...data.options }));
+          }
+        } catch (e) {}
+        firstLoad.current = false;
+      }, []);
+      useEffect(() => {
+        if (firstLoad.current) return;
+        try { localStorage.setItem(LS_KEY, JSON.stringify({ groups, options })); } catch (e) {}
+      }, [groups, options]);
+
+      function updateGroup(i, g) { setGroups(gs => gs.map((x, idx) => idx === i ? g : x)); }
+      function removeGroup(i) { setGroups(gs => gs.filter((_, idx) => idx !== i)); }
+      function addGroup() {
+        const n = groups.length + 1;
+        setGroups(gs => [...gs, { id: 'g' + Date.now(), name: '그룹 ' + n, color: COLOR_CYCLE[gs.length % COLOR_CYCLE.length], roster: '' }]);
+      }
+
+      function generate() {
+        const active = groups.filter(g => rosterToNames(g.roster).length >= 4);
+        const out = groups.map((g, idx) => {
+          const names = rosterToNames(g.roster);
+          const result = RRD.generateGroupSchedule(names, {
+            seed: options.seed + idx,                       // 그룹마다 다른 시드(상대 분포 다양화)
+            maxRounds: options.limitRounds ? options.maxRounds : undefined,
+          });
+          return { group: g, result };
+        });
+        // 코트 매핑: 동시 진행 가능 그룹을 2개씩 코트1·코트2에 배정
+        const playable = out.filter(o => o.result.rounds.length > 0);
+        playable.forEach((o, i) => {
+          const slot = Math.floor(i / 2) + 1;   // 1조차, 2조차 ...
+          const court = (i % 2) + 1;
+          o.courtLabel = `${slot}타임 · 코트${court}`;
+        });
+        setResults(out);
+        setTimeout(() => {
+          const el = document.getElementById('results');
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 50);
+      }
+
+      function loadSample() {
+        const f1 = ['김민지','이서연','박지우','최예린','정수아','강하윤','윤채원','한소율'];
+        const f2 = ['오지안','서유나','노아인','임다은','조하랑','신가은','권나윤'];
+        const m1 = ['김도윤','이준서','박시우','최하준','정은우','강지호','윤건우','한선우'];
+        const m2 = ['오태양','서이안','노주원','임지훈','조현우','신준혁','권민재'];
+        setGroups([
+          { id:'g1', name:'여자 1조', color:'rose',   roster: f1.join('\n') },
+          { id:'g2', name:'여자 2조', color:'pink',   roster: f2.join('\n') },
+          { id:'g3', name:'남자 1조', color:'blue',   roster: m1.join('\n') },
+          { id:'g4', name:'남자 2조', color:'indigo', roster: m2.join('\n') },
+        ]);
+      }
+
+      const playableResults = results ? results.filter(o => o.result.rounds.length > 0) : [];
+
+      return (
+        <div className="max-w-5xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
+          {/* 헤더 */}
+          <header className="no-print flex items-center justify-between gap-2 mb-5">
+            <a href="./" className="flex items-center gap-2 group shrink-0">
+              <span className="text-2xl transition-transform group-hover:scale-110">🏁</span>
+              <span className="text-sm font-black text-slate-400 group-hover:text-slate-700">← MatchMaker Pro</span>
+            </a>
+          </header>
+
+          <div className="no-print mb-6">
+            <h1 className="font-display text-2xl sm:text-3xl text-slate-900 flex items-center gap-2">
+              🎾 라운드 로빈 복식
+              <span className="text-[10px] font-black bg-gradient-to-br from-emerald-500 to-teal-600 text-white px-2 py-0.5 rounded uppercase tracking-wide">New</span>
+            </h1>
+            <p className="text-slate-500 text-sm font-medium mt-1">
+              피클볼 수업용 — 그룹별로 <b>매 라운드 4명이 복식(2 vs 2)</b>, 나머지는 대기.
+              모든 학생이 서로 다른 파트너/상대와 만나도록 자동 편성합니다.
+            </p>
+          </div>
+
+          {/* 옵션 바 */}
+          <div className="no-print bg-white rounded-2xl border border-slate-200 shadow-sm p-3 sm:p-4 mb-5 flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-sm font-bold text-slate-600 cursor-pointer">
+              <input type="checkbox" checked={options.limitRounds}
+                onChange={e => setOptions(o => ({ ...o, limitRounds: e.target.checked }))} className="w-4 h-4 accent-indigo-600" />
+              라운드 수 제한
+            </label>
+            {options.limitRounds && (
+              <input type="number" min="1" max="40" value={options.maxRounds}
+                onChange={e => setOptions(o => ({ ...o, maxRounds: Math.max(1, parseInt(e.target.value) || 1) }))}
+                className="w-16 border-2 border-slate-200 rounded-lg px-2 py-1 text-sm font-bold text-center" />
+            )}
+            <label className="flex items-center gap-2 text-sm font-bold text-slate-600 cursor-pointer">
+              <input type="checkbox" checked={options.score}
+                onChange={e => setOptions(o => ({ ...o, score: e.target.checked }))} className="w-4 h-4 accent-indigo-600" />
+              점수 입력칸 표시
+            </label>
+            <label className="flex items-center gap-2 text-sm font-bold text-slate-600 cursor-pointer">
+              인쇄:
+              <select value={options.printMode} onChange={e => setOptions(o => ({ ...o, printMode: e.target.value }))}
+                className="border-2 border-slate-200 rounded-lg px-2 py-1 text-sm font-bold">
+                <option value="each">그룹당 1장</option>
+                <option value="all">전체 이어서</option>
+              </select>
+            </label>
+            <button onClick={() => setOptions(o => ({ ...o, seed: (o.seed + 1) % 100000 }))}
+              className="text-sm font-bold text-slate-500 hover:text-indigo-600 border-2 border-slate-200 rounded-lg px-3 py-1">🎲 다른 조합</button>
+          </div>
+
+          {/* 그룹 입력 */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+            {groups.map((g, i) => (
+              <GroupCard key={g.id} group={g} index={i}
+                onChange={ng => updateGroup(i, ng)}
+                onRemove={() => removeGroup(i)}
+                canRemove={groups.length > 1} />
+            ))}
+          </div>
+
+          {/* 액션 */}
+          <div className="no-print flex flex-wrap items-center gap-2 mb-8">
+            <button onClick={generate}
+              className="bg-gradient-to-br from-indigo-600 to-violet-600 text-white px-6 py-3 rounded-2xl font-black shadow-md hover:shadow-lg active:scale-95 transition-all">
+              🚀 로테이션 생성
+            </button>
+            <button onClick={addGroup}
+              className="bg-slate-100 text-slate-600 px-4 py-3 rounded-2xl font-black hover:bg-slate-200 active:scale-95">＋ 그룹 추가</button>
+            <button onClick={loadSample}
+              className="bg-slate-100 text-slate-600 px-4 py-3 rounded-2xl font-black hover:bg-slate-200 active:scale-95">📋 예시 명단</button>
+            {results && (
+              <button onClick={() => window.print()}
+                className="bg-slate-800 text-white px-4 py-3 rounded-2xl font-black hover:bg-slate-900 active:scale-95">🖨 인쇄 / PDF</button>
+            )}
+          </div>
+
+          {/* 결과 */}
+          {results && (
+            <div id="results">
+              {/* 코트 매핑 안내 */}
+              {playableResults.length > 0 && (
+                <div className="no-print bg-gradient-to-br from-slate-800 to-slate-900 text-white rounded-2xl p-4 sm:p-5 mb-6 shadow-md">
+                  <h3 className="font-display text-lg mb-2 flex items-center gap-2">🏟 코트 배정 (코트 2개 기준)</h3>
+                  <p className="text-slate-300 text-sm mb-3">
+                    그룹별 일정은 독립적입니다. 코트가 2개이므로 <b className="text-white">두 그룹이 동시</b>에 진행할 수 있어요.
+                    아래 순서대로 코트에 배치하고, 한 타임이 끝나면 다음 그룹으로 교체하세요.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {playableResults.map((o, i) => {
+                      const c = COLORS[o.group.color] || COLORS.blue;
+                      return (
+                        <span key={o.group.id} className={`text-xs font-black px-3 py-1.5 rounded-xl bg-gradient-to-r ${c.head} text-white`}>
+                          {o.courtLabel} ← {o.group.name}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {results.map(o => (
+                <GroupSchedule key={o.group.id} group={o.group} result={o.result}
+                  options={options} courtLabel={o.courtLabel} />
+              ))}
+
+              <div className="no-print text-center text-[12px] text-slate-400 font-medium py-6">
+                MatchMaker Pro · Round Robin Doubles — 알고리즘 검증됨(모든 파트너 1회 보장, N≡0·1 mod4)
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
