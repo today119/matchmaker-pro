@@ -47,6 +47,9 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 
+  <!-- ✅ KDK(라운드 로빈 복식) 알고리즘 — window.RoundRobinDoubles 제공 -->
+  <script src="round-robin-doubles.js"></script>
+
   <!-- ✅ 앱 설정 — Firebase는 그대로 / GAS API URL은 본인 배포 URL로 교체 -->
   <script>
     // GitHub Pages 등 정적 호스팅 환경 — URL 해시(#share=..., #s=...)로 라우팅
@@ -239,10 +242,11 @@
       { id: 'tennis',      name: '테니스',  icon: '🎾' },
       { id: 'tabletennis', name: '탁구',    icon: '🏓' },
       { id: 'volleyball',  name: '배구',    icon: '🏐' },
+      { id: 'pickleball',  name: '피클볼',  icon: '🥒' },
       { id: 'custom',      name: '기타',    icon: '🏆' },
     ];
-    // 세트제로 진행하는 종목 — 배드민턴, 테니스, 탁구, 배구
-    const SETS_SPORTS = ['badminton','tennis','tabletennis','volleyball'];
+    // 세트제로 진행하는 종목 — 배드민턴, 테니스, 탁구, 배구, 피클볼
+    const SETS_SPORTS = ['badminton','tennis','tabletennis','volleyball','pickleball'];
     const isSetsGame = (sport) => SETS_SPORTS.includes(sport);
     // 테니스만 특수 로직 사용
     const isTennis = (sport) => sport === 'tennis';
@@ -435,7 +439,7 @@
     };
 
     const MAX_PARTICIPANTS = 64;
-    const TType = { TOURNAMENT:'TOURNAMENT', LEAGUE:'LEAGUE', GROUP_KNOCKOUT:'GROUP_KNOCKOUT', GROUP_LEAGUE:'GROUP_LEAGUE' };
+    const TType = { TOURNAMENT:'TOURNAMENT', LEAGUE:'LEAGUE', GROUP_KNOCKOUT:'GROUP_KNOCKOUT', GROUP_LEAGUE:'GROUP_LEAGUE', KDK:'KDK' };
 
     // ================================================================
     //  대회 로직
@@ -2328,7 +2332,7 @@
         const changes = deuce ? (10 + (t - 20)) : Math.floor(t/2);
         return (changes % 2 === 0) ? setServer : otherSide(setServer);
       }
-      if(sport==='badminton' || sport==='volleyball'){
+      if(sport==='badminton' || sport==='volleyball' || sport==='pickleball'){
         // 랠리 포인트제 — 직전 랠리 승자가 다음 서브(사이드아웃). 세트 시작은 setServer.
         if(a===0 && b===0) return setServer;
         return lastScorer || setServer;
@@ -2339,7 +2343,7 @@
     // ================================================================
     //  ScoreboardView — 코트 태블릿 스코어보드
     // ================================================================
-    const ScoreboardView = ({ match, config, tournamentId, groupId, onSaved, onClose }) => {
+    const ScoreboardView = ({ match, config, tournamentId, groupId, onSaved, onClose, onScoreSave }) => {
       const sm = isSetsGame(config?.sport);
       const tn = isTennis(config?.sport);
       const totalSets = config?.sets || 3;
@@ -2612,6 +2616,16 @@
       };
 
       const saveToFirebase = async (hist, isFinal) => {
+        // 🎾 KDK 등 외부 저장 — onScoreSave 있으면 Firebase 대신 콜백으로(단판 점수)
+        if(onScoreSave){
+          const sA=hist.filter(s=>s.a>s.b).length, sB=hist.filter(s=>s.b>s.a).length;
+          const over = sA>=winSets || sB>=winSets;
+          if(!isFinal && !over) return;          // 매치 안 끝났으면 무시
+          const last = hist[hist.length-1] || {a:scoreA,b:scoreB};
+          setDone(true);
+          onScoreSave(last.a, last.b);
+          return;
+        }
         setSaving(true);
         try {
           const sA=hist.filter(s=>s.a>s.b).length;
@@ -3411,6 +3425,401 @@ function getSheetUrl() {
     // ================================================================
     //  App — 메인 컴포넌트
     // ================================================================
+    // ════════════════════════════════════════════════════════════════
+    //  🎾 KDK (라운드 로빈 복식) — 모듈에서 이식한 컴포넌트 + 대회 내장 뷰
+    //  알고리즘은 window.RoundRobinDoubles, 스코어보드는 기존 ScoreboardView 재사용
+    // ════════════════════════════════════════════════════════════════
+    const COLORS = {
+      rose:   { head: 'from-rose-500 to-rose-600',     soft: 'bg-rose-50 border-rose-200',     text: 'text-rose-700',   ring: 'focus:border-rose-500' },
+      pink:   { head: 'from-pink-500 to-fuchsia-600',  soft: 'bg-pink-50 border-pink-200',     text: 'text-pink-700',   ring: 'focus:border-pink-500' },
+      blue:   { head: 'from-blue-500 to-blue-600',     soft: 'bg-blue-50 border-blue-200',     text: 'text-blue-700',   ring: 'focus:border-blue-500' },
+      indigo: { head: 'from-indigo-500 to-violet-600', soft: 'bg-indigo-50 border-indigo-200', text: 'text-indigo-700', ring: 'focus:border-indigo-500' },
+      teal:   { head: 'from-teal-500 to-emerald-600',  soft: 'bg-teal-50 border-teal-200',     text: 'text-teal-700',   ring: 'focus:border-teal-500' },
+      amber:  { head: 'from-amber-500 to-orange-600',  soft: 'bg-amber-50 border-amber-200',   text: 'text-amber-700',  ring: 'focus:border-amber-500' },
+    };
+    const COLOR_CYCLE = ['rose','pink','blue','indigo','teal','amber'];
+
+    function rosterToNames(roster) {
+      return (roster || '')
+        .split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+    }
+
+    // ── 점수 → 개인 순위 통계 (KDK: 본인 팀 점수를 개인 득점으로 합산) ──
+    //  승점: 승 2 · 무 1 · 패 0
+    function computeStandings(result, groupScores) {
+      const stat = {};
+      result.perPlayer.forEach(p => { stat[p.name] = { name: p.name, played: 0, win: 0, draw: 0, loss: 0, pts: 0, pf: 0 }; });
+      let entered = 0;
+      result.rounds.forEach(rd => {
+        const s = groupScores && groupScores[rd.round];
+        if (!s) return;
+        const a = parseInt(s.a, 10), b = parseInt(s.b, 10);
+        if (isNaN(a) || isNaN(b)) return;
+        entered++;
+        const apply = (names, my, opp) => names.forEach(n => {
+          const t = stat[n]; if (!t) return;
+          t.played++; t.pf += my;
+          if (my > opp) { t.win++; t.pts += 2; }
+          else if (my < opp) { t.loss++; }
+          else { t.draw++; t.pts += 1; }
+        });
+        apply(rd.teamA, a, b);
+        apply(rd.teamB, b, a);
+      });
+      const rows = Object.values(stat).map(t => ({ ...t, avg: t.played ? +(t.pf / t.played).toFixed(2) : 0 }));
+      return { rows, entered };
+    }
+
+    function sortStandings(rows, by) {
+      const r = rows.slice();
+      if (by === 'pf') r.sort((a, b) => b.pf - a.pf || b.pts - a.pts || b.avg - a.avg || a.name.localeCompare(b.name));
+      else if (by === 'avg') r.sort((a, b) => b.avg - a.avg || b.pts - a.pts || b.pf - a.pf || a.name.localeCompare(b.name));
+      else r.sort((a, b) => b.pts - a.pts || b.avg - a.avg || b.pf - a.pf || a.name.localeCompare(b.name));
+      return r;
+    }
+
+    // ── 순위표 (승점 / 총득점 / 평균득점 정렬) ────────────────
+    function StandingsTable({ result, scores, color }) {
+      const c = COLORS[color] || COLORS.blue;
+      const [by, setBy] = useState('pts');
+      const { rows, entered } = computeStandings(result, scores);
+      if (entered === 0) {
+        return (
+          <div className="mt-3 text-[12px] text-slate-400 font-bold bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+            🏆 순위표 — 위 경기표에 점수를 입력하면 자동 집계됩니다 (승점·총득점·평균득점 순위).
+          </div>
+        );
+      }
+      const sorted = sortStandings(rows, by);
+      const TABS = [['pts', '승점'], ['pf', '총득점'], ['avg', '평균득점']];
+      return (
+        <div className="mt-4">
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+            <span className="font-display text-base text-slate-700">🏆 순위표</span>
+            <div className="flex gap-1">
+              {TABS.map(([k, label]) => (
+                <button key={k} onClick={() => setBy(k)}
+                  className={`text-[12px] font-black px-2.5 py-1 rounded-lg transition-all ${by === k ? `bg-gradient-to-r ${c.head} text-white` : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                  {label}순
+                </button>
+              ))}
+            </div>
+          </div>
+          <table className="w-full text-sm border-collapse">
+            <thead>
+              <tr className="text-[11px] uppercase tracking-wider text-slate-400 font-black border-b-2 border-slate-200">
+                <th className="text-center py-1.5 w-10">#</th>
+                <th className="text-left py-1.5 px-2">이름</th>
+                <th className="text-center py-1.5 px-1">경기</th>
+                <th className="text-center py-1.5 px-1">승-무-패</th>
+                <th className={`text-center py-1.5 px-1 ${by === 'pts' ? c.text : ''}`}>승점</th>
+                <th className={`text-center py-1.5 px-1 ${by === 'pf' ? c.text : ''}`}>총득점</th>
+                <th className={`text-center py-1.5 px-1 ${by === 'avg' ? c.text : ''}`}>평균</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((t, i) => (
+                <tr key={t.name} className="border-b border-slate-50">
+                  <td className="text-center py-2">
+                    <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[12px] font-black ${i < 3 ? `bg-gradient-to-br ${c.head} text-white` : 'text-slate-400'}`}>{i + 1}</span>
+                  </td>
+                  <td className="text-left py-2 px-2 font-bold text-slate-800">{t.name}</td>
+                  <td className="text-center py-2 px-1 text-slate-500">{t.played}</td>
+                  <td className="text-center py-2 px-1 text-slate-500 text-[12px]">{t.win}-{t.draw}-{t.loss}</td>
+                  <td className={`text-center py-2 px-1 ${by === 'pts' ? 'font-black ' + c.text : 'text-slate-700'}`}>{t.pts}</td>
+                  <td className={`text-center py-2 px-1 ${by === 'pf' ? 'font-black ' + c.text : 'text-slate-700'}`}>{t.pf}</td>
+                  <td className={`text-center py-2 px-1 ${by === 'avg' ? 'font-black ' + c.text : 'text-slate-700'}`}>{t.avg}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="text-[11px] text-slate-400 mt-1.5">승점: 승 2 · 무 1 · 패 0 / 총득점 = 본인 팀 점수 합 / 평균 = 총득점 ÷ 경기수</p>
+        </div>
+      );
+    }
+
+
+    function GroupCard({ group, index, onChange, onRemove, canRemove }) {
+      const c = COLORS[group.color] || COLORS.blue;
+      const count = rosterToNames(group.roster).length;
+      return (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className={`bg-gradient-to-r ${c.head} px-4 py-2.5 flex items-center gap-2`}>
+            <span className="text-white/80 font-black text-sm">조 {index + 1}</span>
+            <input
+              value={group.name}
+              onChange={e => onChange({ ...group, name: e.target.value })}
+              className="flex-1 bg-white/20 text-white placeholder-white/60 font-black px-3 py-1 rounded-lg outline-none focus:bg-white/30"
+              placeholder="그룹명"
+            />
+            <span className="text-white font-black text-xs bg-white/20 px-2 py-0.5 rounded-full">{count}명</span>
+            {canRemove && (
+              <button onClick={onRemove} title="그룹 삭제"
+                className="text-white/80 hover:text-white hover:bg-white/20 w-7 h-7 rounded-full font-black">✕</button>
+            )}
+          </div>
+          <div className="p-3">
+            <textarea
+              value={group.roster}
+              onChange={e => onChange({ ...group, roster: e.target.value })}
+              rows={6}
+              placeholder={"학생 이름을 한 줄에 한 명씩 입력\n예)\n김민준\n이서연\n박도윤\n..."}
+              className={`w-full text-sm border-2 border-slate-200 rounded-xl px-3 py-2 outline-none resize-y ${c.ring}`}
+            />
+            <div className="flex items-center justify-between mt-1.5">
+              <span className={`text-[11px] font-bold ${count < 4 ? 'text-red-500' : count > 8 ? 'text-amber-600' : c.text}`}>
+                {count < 4 ? `⚠ 최소 4명 필요 (현재 ${count}명)` :
+                 count > 8 ? `${count}명 — 권장 7~8명, 라운드가 많아집니다` :
+                 `${count}명 · 권장 인원`}
+              </span>
+              <div className="flex gap-1">
+                {COLOR_CYCLE.map(col => (
+                  <button key={col} onClick={() => onChange({ ...group, color: col })}
+                    className={`w-4 h-4 rounded-full bg-gradient-to-br ${COLORS[col].head} ${group.color === col ? 'ring-2 ring-offset-1 ring-slate-400' : ''}`} />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function GroupSchedule({ group, result, options, courtLabel, scores, onScore, onScoreboard }) {
+      const c = COLORS[group.color] || COLORS.blue;
+      const r = result;
+      const sc = scores || {};
+      if (!r) return null;
+
+      return (
+        <div className={`group-page ${options.printMode === 'each' ? 'page-each' : ''} bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden print-area mb-6`}>
+          <div className={`bg-gradient-to-r ${c.head} px-5 py-3 flex items-center justify-between flex-wrap gap-2`}>
+            <div className="flex items-center gap-2">
+              <span className="text-white font-display text-xl">{group.name}</span>
+              <span className="text-white/80 text-sm font-bold">· KDK 복식</span>
+            </div>
+            <div className="flex items-center gap-2 text-white text-xs font-bold">
+              <span className="bg-white/20 px-2 py-1 rounded-lg">{r.k}명</span>
+              <span className="bg-white/20 px-2 py-1 rounded-lg">{r.rounds.length}라운드</span>
+              <span className="bg-white/20 px-2 py-1 rounded-lg">
+                {r.mode === 'fixed' ? '인당 ' + r.targetGames + '게임' : '인당 ' + (r.k - 1) + '게임'}
+              </span>
+              {courtLabel && <span className="bg-white/25 px-2 py-1 rounded-lg">🏟 {courtLabel}</span>}
+            </div>
+          </div>
+
+          {/* 경고 */}
+          {r.warnings.length > 0 && (
+            <div className="px-5 pt-3 space-y-1">
+              {r.warnings.map((w, i) => (
+                <p key={i} className="text-[12px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">⚠ {w}</p>
+              ))}
+            </div>
+          )}
+
+          {r.rounds.length === 0 ? (
+            <div className="p-6 text-center text-slate-400 font-bold">학생 4명 이상을 입력하세요.</div>
+          ) : (
+            <div className="p-3 sm:p-4 overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="text-[11px] uppercase tracking-wider text-slate-400 font-black">
+                    <th className="text-center py-2 px-2 w-12">R</th>
+                    <th className="text-right py-2 px-2">팀 A</th>
+                    <th className="text-center py-2 px-1 w-10">vs</th>
+                    <th className="text-left py-2 px-2">팀 B</th>
+                    <th className="text-left py-2 px-2">대기</th>
+                    {options.score && <th className="text-center py-2 px-2 w-24 no-print-keep">점수</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {r.rounds.map(rd => (
+                    <tr key={rd.round} className="border-t border-slate-100">
+                      <td className="text-center py-2.5 px-2">
+                        <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full ${c.soft} ${c.text} font-black text-xs`}>{rd.round}</span>
+                      </td>
+                      <td className="text-right py-2.5 px-2 font-bold text-slate-800 whitespace-nowrap">{rd.teamA.join(' · ')}</td>
+                      <td className="text-center py-2.5 px-1 text-slate-300 font-black text-xs">vs</td>
+                      <td className="text-left py-2.5 px-2 font-bold text-slate-800 whitespace-nowrap">{rd.teamB.join(' · ')}</td>
+                      <td className="text-left py-2.5 px-2 text-[12px] text-slate-400">{rd.waiting.length ? rd.waiting.join(', ') : '—'}</td>
+                      {options.score && (
+                        <td className="text-center py-2 px-2">
+                          <span className="inline-flex items-center gap-1">
+                            <input value={(sc[rd.round] && sc[rd.round].a) || ''}
+                              onChange={e => onScore && onScore(rd.round, 'a', e.target.value)}
+                              inputMode="numeric" maxLength={3}
+                              className="w-9 h-7 border border-slate-300 rounded text-center text-xs font-bold focus:border-indigo-500 outline-none" placeholder="-" />
+                            <span className="text-slate-300">:</span>
+                            <input value={(sc[rd.round] && sc[rd.round].b) || ''}
+                              onChange={e => onScore && onScore(rd.round, 'b', e.target.value)}
+                              inputMode="numeric" maxLength={3}
+                              className="w-9 h-7 border border-slate-300 rounded text-center text-xs font-bold focus:border-indigo-500 outline-none" placeholder="-" />
+                            <button onClick={() => onScoreboard && onScoreboard(rd)} title="스코어보드로 입력"
+                              className="no-print ml-1 w-7 h-7 rounded-lg bg-slate-800 text-white hover:bg-slate-900 active:scale-95 text-sm leading-none">🏓</button>
+                          </span>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* 선수별 요약 */}
+              <details className="mt-3 group/sum">
+                <summary className="cursor-pointer text-[12px] font-black text-slate-400 hover:text-slate-600 list-none select-none">
+                  ▸ 선수별 출전·파트너 요약
+                </summary>
+                <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  {r.perPlayer.map(p => (
+                    <div key={p.name} className={`text-[12px] rounded-lg px-3 py-1.5 ${c.soft} border`}>
+                      <span className="font-black">{p.name}</span>
+                      <span className="text-slate-500"> — {p.games}게임 / 대기 {p.byes}회 · 파트너 {p.partners.length}명 · 상대 {p.opponents.length}명</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+
+              {/* 순위표 (점수 입력 시) */}
+              {options.score && <StandingsTable result={r} scores={sc} color={group.color} />}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+
+    // ── 🎾 KdkView — KDK(라운드 로빈 복식) 진행 화면 (대회 내장형) ──
+    //  data = generatedKDK = { groups, options, results, scores }
+    //  onChange(newData) → 상위 generatedKDK state 갱신 → 자동 저장
+    function KdkView({ data, onChange, canEdit }) {
+      // Firebase는 빈 배열을 저장 시 제거하므로, 로드된 결과의 배열 필드를 복원(정규화)
+      const normResult = (res) => res ? ({
+        ...res,
+        rounds: (res.rounds||[]).map(rd=>({ ...rd, teamA:rd.teamA||[], teamB:rd.teamB||[], waiting:rd.waiting||[] })),
+        warnings: res.warnings||[],
+        perPlayer: (res.perPlayer||[]).map(p=>({ ...p, partners:p.partners||[], opponents:p.opponents||[] })),
+        coverage: res.coverage||{},
+      }) : res;
+      const groups  = (data && data.groups)  || [];
+      const options = (data && data.options) || { mode:'full', gamesPerPlayer:5, score:true, seed:2025, printMode:'each' };
+      const results = (data && data.results) ? data.results.map(o=>({ groupId:o.groupId, result: normResult(o.result) })) : null;
+      const scores  = (data && data.scores)  || {};
+      const [sb, setSb] = useState(null);
+
+      const update    = (patch) => onChange({ ...(data||{}), ...patch });
+      const setOptions= (o)     => update({ options: { ...options, ...o } });
+
+      function updateGroup(i, g){ update({ groups: groups.map((x,idx)=>idx===i?g:x) }); }
+      function removeGroup(i){ update({ groups: groups.filter((_,idx)=>idx!==i) }); }
+      function addGroup(){ update({ groups: [...groups, { id:'kg'+Date.now(), name:'그룹 '+(groups.length+1), color: COLOR_CYCLE[groups.length%COLOR_CYCLE.length], roster:'' }] }); }
+
+      function generate(){
+        const out = groups.map((g,idx)=>{
+          const names = rosterToNames(g.roster);
+          const result = window.RoundRobinDoubles.generateGroupSchedule(names, {
+            seed:(options.seed||2025)+idx, mode:options.mode, gamesPerPlayer:options.gamesPerPlayer,
+          });
+          return { groupId:g.id, result };
+        });
+        update({ results: out, scores: {} });
+        setTimeout(()=>{ const el=document.getElementById('kdk-results'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'}); }, 60);
+      }
+
+      function setScore(groupId, round, side, val){
+        const clean = String(val).replace(/[^0-9]/g,'').slice(0,3);
+        const g = scores[groupId] || {};
+        const cell = g[round] || {a:'',b:''};
+        update({ scores: { ...scores, [groupId]: { ...g, [round]: { ...cell, [side]: clean } } } });
+      }
+
+      const playable = results ? results.filter(o=>o.result.rounds.length>0) : [];
+      const courtLabelOf = (groupId) => {
+        const i = playable.findIndex(o=>o.groupId===groupId);
+        return i<0 ? '' : `${Math.floor(i/2)+1}타임 · 코트${(i%2)+1}`;
+      };
+      const groupById = (id) => groups.find(g=>g.id===id) || { name:'', color:'blue' };
+
+      // ── 입력 화면 (생성 전) ──
+      if(!results){
+        return (
+          <div className="max-w-5xl mx-auto">
+            {/* 옵션 바 */}
+            <div className="no-print bg-white rounded-2xl border border-slate-200 shadow-sm p-3 sm:p-4 mb-5 space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-black text-slate-700">진행 방식</span>
+                <div className="flex rounded-xl overflow-hidden border-2 border-slate-200">
+                  <button onClick={()=>setOptions({mode:'full'})} className={`px-3 py-1.5 text-sm font-black transition-all ${options.mode!=='fixed'?'bg-indigo-600 text-white':'bg-white text-slate-500 hover:bg-slate-50'}`}>전체 (모든 파트너 1회)</button>
+                  <button onClick={()=>setOptions({mode:'fixed'})} className={`px-3 py-1.5 text-sm font-black transition-all ${options.mode==='fixed'?'bg-indigo-600 text-white':'bg-white text-slate-500 hover:bg-slate-50'}`}>인당 고정 게임수</button>
+                </div>
+                {options.mode==='fixed' && (
+                  <label className="flex items-center gap-1.5 text-sm font-bold text-slate-600">인당
+                    <input type="number" min="1" max="20" value={options.gamesPerPlayer||5} onChange={e=>setOptions({gamesPerPlayer:Math.max(1,parseInt(e.target.value)||1)})} className="w-14 border-2 border-slate-200 rounded-lg px-2 py-1 text-sm font-black text-center"/>게임</label>
+                )}
+                <span className="text-[12px] text-slate-400 font-medium">{options.mode==='fixed'?'시간 부족 시 — 각자 정해진 게임수만':'시간 충분 시 — 모든 학생이 서로 1회씩 파트너'}</span>
+              </div>
+              <div className="border-t border-slate-100"/>
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-2 text-sm font-bold text-slate-600 cursor-pointer">
+                  <input type="checkbox" checked={options.score!==false} onChange={e=>setOptions({score:e.target.checked})} className="w-4 h-4 accent-indigo-600"/>점수 입력 + 순위표</label>
+                <button onClick={()=>setOptions({seed:((options.seed||2025)+1)%100000})} className="text-sm font-bold text-slate-500 hover:text-indigo-600 border-2 border-slate-200 rounded-lg px-3 py-1">🎲 다른 조합</button>
+              </div>
+            </div>
+            {/* 그룹 입력 */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+              {groups.map((g,i)=>(
+                <GroupCard key={g.id} group={g} index={i} onChange={ng=>updateGroup(i,ng)} onRemove={()=>removeGroup(i)} canRemove={groups.length>1}/>
+              ))}
+            </div>
+            <div className="no-print flex flex-wrap items-center gap-2">
+              <button onClick={generate} className="bg-gradient-to-br from-indigo-600 to-violet-600 text-white px-6 py-3 rounded-2xl font-black shadow-md hover:shadow-lg active:scale-95 transition-all">🚀 로테이션 생성</button>
+              <button onClick={addGroup} className="bg-slate-100 text-slate-600 px-4 py-3 rounded-2xl font-black hover:bg-slate-200 active:scale-95">＋ 그룹 추가</button>
+            </div>
+          </div>
+        );
+      }
+
+      // ── 결과 화면 ──
+      return (
+        <div id="kdk-results" className="max-w-5xl mx-auto">
+          {/* 코트 매핑 + 액션 */}
+          <div className="no-print flex flex-wrap items-center justify-between gap-2 mb-4">
+            <div className="flex flex-wrap gap-2">
+              {playable.map(o=>{ const g=groupById(o.groupId); const c=COLORS[g.color]||COLORS.blue; return (
+                <span key={o.groupId} className={`text-xs font-black px-3 py-1.5 rounded-xl bg-gradient-to-r ${c.head} text-white`}>{courtLabelOf(o.groupId)} ← {g.name}</span>
+              );})}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={()=>window.print()} className="bg-slate-800 text-white px-4 py-2 rounded-xl font-black hover:bg-slate-900 active:scale-95">🖨 인쇄</button>
+              {canEdit && <button onClick={()=>{ if(window.confirm('명단을 수정하면 현재 대진·점수가 사라집니다. 계속할까요?')) update({ results:null }); }} className="bg-slate-100 text-slate-600 px-4 py-2 rounded-xl font-black hover:bg-slate-200 active:scale-95">🛠 명단/설정 수정</button>}
+              {canEdit && <button onClick={()=>{ if(window.confirm('대진을 다시 섞을까요? (점수는 초기화됩니다)')) { setOptions({seed:((options.seed||2025)+1)%100000}); setTimeout(generate,30); } }} className="bg-slate-100 text-slate-600 px-4 py-2 rounded-xl font-black hover:bg-slate-200 active:scale-95">🎲 다시 편성</button>}
+            </div>
+          </div>
+
+          {results.map(o=>{
+            const g = groupById(o.groupId);
+            return (
+              <GroupSchedule key={o.groupId} group={g} result={o.result} options={options}
+                courtLabel={courtLabelOf(o.groupId)}
+                scores={scores[o.groupId]||{}}
+                onScore={canEdit ? (round,side,val)=>setScore(o.groupId,round,side,val) : ()=>{}}
+                onScoreboard={canEdit ? (rd)=>setSb({ groupId:o.groupId, groupName:g.name, round:rd.round, teamA:rd.teamA, teamB:rd.teamB }) : null}/>
+            );
+          })}
+
+          {/* 🏓 스코어보드 (기존 ScoreboardView 재사용) */}
+          {sb && (
+            <div className="fixed inset-0 z-[60] overflow-auto">
+              <ScoreboardView
+                match={{ home:{ name: sb.teamA.join(' · ') }, away:{ name: sb.teamB.join(' · ') }, court:'' }}
+                config={{ name: sb.groupName + ' · ' + sb.round + '경기', sport:'pickleball', sets:1 }}
+                onScoreSave={(a,b)=>{ const g=scores[sb.groupId]||{}; update({ scores: { ...scores, [sb.groupId]: { ...g, [sb.round]: { a:String(a), b:String(b) } } } }); setSb(null); }}
+                onClose={()=>setSb(null)}/>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+
     const DEFAULT_CONFIG = {
       name:'', sport:'soccer', matchType:'team_match', tournamentType:TType.TOURNAMENT,
       teamFormat:'2D1S', teamRounds:1, sets:3,
@@ -3424,6 +3833,20 @@ function getSheetUrl() {
       tennisTiebreak: true,    // 6-6 시 타이브레이크 (기본 ON)
       tennisFinalMatchTb: true // 마지막 세트 매치 타이브레이크 (10점)
     };
+
+    // 🎾 KDK 기본 그룹 (여자2·남자2조) + 초기 데이터
+    const DEFAULT_KDK_GROUPS = () => ([
+      { id:'kg1', name:'여자 1조', color:'rose',   roster:'' },
+      { id:'kg2', name:'여자 2조', color:'pink',   roster:'' },
+      { id:'kg3', name:'남자 1조', color:'blue',   roster:'' },
+      { id:'kg4', name:'남자 2조', color:'indigo', roster:'' },
+    ]);
+    const initialKdkData = () => ({
+      groups: DEFAULT_KDK_GROUPS(),
+      options: { mode:'full', gamesPerPlayer:5, score:true, seed:2025, printMode:'each' },
+      results: null,
+      scores: {},
+    });
 
     const App = () => {
       const [loading, setLoading]      = useState(true);
@@ -3447,6 +3870,7 @@ function getSheetUrl() {
       const [generatedMatches,  setGeneratedMatches] = useState([]);
       const [generatedLeague,   setGeneratedLeague]  = useState([]);
       const [generatedGroups,   setGeneratedGroups]  = useState([]);
+      const [generatedKDK,      setGeneratedKDK]     = useState(null);   // 🎾 KDK 데이터 { groups, options, results, scores }
       const [step, setStep]            = useState(1);
       const [selectedMatch, setSelectedMatch]               = useState(null);
       const [selectedLeagueMatch, setSelectedLeagueMatch]   = useState(null);
@@ -3496,6 +3920,7 @@ function getSheetUrl() {
               setGeneratedMatches(data.generatedMatches||[]);
               setGeneratedLeague(data.generatedLeague||[]);
               setGeneratedGroups(data.generatedGroups||[]);
+              setGeneratedKDK(data.generatedKDK||null);
               setView('share');
             }
             setLoading(false);
@@ -3583,9 +4008,9 @@ function getSheetUrl() {
           isCompleted: checkIsCompleted(),
           isArchived: existing?.isArchived || false,
           folderId: existing?.folderId || null,  // ⭐ 폴더 정보 유지
-          config, participants, activeParticipants, generatedMatches, generatedLeague, generatedGroups
+          config, participants, activeParticipants, generatedMatches, generatedLeague, generatedGroups, generatedKDK
         };
-      },[currentId,userTournaments,config,participants,activeParticipants,generatedMatches,generatedLeague,generatedGroups]);
+      },[currentId,userTournaments,config,participants,activeParticipants,generatedMatches,generatedLeague,generatedGroups,generatedKDK]);
 
       const checkIsCompleted=()=>{
         if(config.tournamentType===TType.TOURNAMENT||config.tournamentType===TType.GROUP_KNOCKOUT){
@@ -3595,6 +4020,11 @@ function getSheetUrl() {
         }
         if(config.tournamentType===TType.LEAGUE) return generatedLeague.every(r=>r.matches.every(m=>m.status==='completed'||m.home.id.includes('bye')||m.away.id.includes('bye')));
         if(config.tournamentType===TType.GROUP_LEAGUE) return generatedGroups.every(g=>g.rounds.every(r=>r.matches.every(m=>m.status==='completed'||m.home.id.includes('bye')||m.away.id.includes('bye'))));
+        if(config.tournamentType===TType.KDK){
+          const res=generatedKDK&&generatedKDK.results; if(!res||!res.length)return false;
+          const sc=generatedKDK.scores||{};
+          return res.every(o=>(o.result.rounds||[]).every(rd=>{ const c=sc[o.groupId]&&sc[o.groupId][rd.round]; return c&&c.a!==''&&c.a!=null&&c.b!==''&&c.b!=null; }));
+        }
         return false;
       };
 
@@ -3616,7 +4046,7 @@ function getSheetUrl() {
             .catch(err=>{console.error(err);setSaving(false);});
         },300);
         return()=>{if(saveTimerRef.current)clearTimeout(saveTimerRef.current);};
-      },[generatedMatches,generatedLeague,generatedGroups,config,participants,activeParticipants]);
+      },[generatedMatches,generatedLeague,generatedGroups,generatedKDK,config,participants,activeParticipants]);
 
       // ── 대회 관리 ────────────────────────────────────
       const activeListenerRef = useRef(null); // 현재 열린 대회 리스너 참조
@@ -3625,8 +4055,8 @@ function getSheetUrl() {
         const id=Math.random().toString(36).substr(2,9);
         const newCfg={...DEFAULT_CONFIG,name:'새 대회'};
         setCurrentId(id);setConfig(newCfg);setParticipants([]);setActiveParticipants([]);
-        setGeneratedMatches([]);setGeneratedLeague([]);setGeneratedGroups([]);setStep(1);
-        const record={id,createdAt:Date.now(),isCompleted:false,isArchived:false,config:newCfg,participants:[],activeParticipants:[],generatedMatches:[],generatedLeague:[],generatedGroups:[]};
+        setGeneratedMatches([]);setGeneratedLeague([]);setGeneratedGroups([]);setGeneratedKDK(null);setStep(1);
+        const record={id,createdAt:Date.now(),isCompleted:false,isArchived:false,config:newCfg,participants:[],activeParticipants:[],generatedMatches:[],generatedLeague:[],generatedGroups:[],generatedKDK:null};
         setUserTournaments(prev=>[record,...prev]);
         fbSave(id,record).catch(console.error);
         setView('setup');
@@ -3636,6 +4066,7 @@ function getSheetUrl() {
         setCurrentId(record.id);setConfig(record.config||{...DEFAULT_CONFIG});setParticipants(record.participants||[]);
         setActiveParticipants(record.activeParticipants||[]);setGeneratedMatches(record.generatedMatches||[]);
         setGeneratedLeague(record.generatedLeague||[]);setGeneratedGroups(record.generatedGroups||[]);
+        setGeneratedKDK(record.generatedKDK||null);
         setView('active');
 
         // 기존 리스너 해제 후 새 리스너 등록
@@ -3649,6 +4080,7 @@ function getSheetUrl() {
           setGeneratedMatches(data.generatedMatches||[]);
           setGeneratedLeague(data.generatedLeague||[]);
           setGeneratedGroups(data.generatedGroups||[]);
+          if(data.generatedKDK!==undefined) setGeneratedKDK(data.generatedKDK||null);
         });
       };
 
@@ -4510,8 +4942,8 @@ function getSheetUrl() {
                         </div>
                       </div>
                       <h3 className="text-lg sm:text-xl font-black text-slate-900 mt-3 sm:mt-4 truncate">{t.config?.name||'무제'}</h3>
-                      <p className="text-[11px] sm:text-[12px] font-black text-slate-400 uppercase mt-1">{t.config?.tournamentType} / {t.config?.matchType}</p>
-                      {isSetsGame(t.config?.sport)&&(
+                      <p className="text-[11px] sm:text-[12px] font-black text-slate-400 uppercase mt-1">{t.config?.tournamentType===TType.KDK?'KDK · 라운드 로빈 복식':`${t.config?.tournamentType} / ${t.config?.matchType}`}</p>
+                      {isSetsGame(t.config?.sport)&&t.config?.tournamentType!==TType.KDK&&(
                         <p className="text-[11px] sm:text-[12px] font-black text-blue-500 uppercase mt-1">
                           {(t.config?.sets||3)===1?'단판제':`${t.config?.sets||3}판 ${Math.ceil((t.config?.sets||3)/2)}선승`}
                         </p>
@@ -4597,9 +5029,9 @@ function getSheetUrl() {
                   <div className="w-full md:w-auto">
                     <h2 className="text-xl sm:text-3xl font-black text-slate-900 italic tracking-tight">{config.name||'무제'}</h2>
                     <div className="flex gap-1.5 sm:gap-2 mt-2 flex-wrap">
-                      <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-blue-100 text-blue-700 rounded-full text-[10px] sm:text-[12px] font-black uppercase tracking-tighter">{config.tournamentType===TType.GROUP_LEAGUE?'조별 풀리그':config.tournamentType}</span>
-                      <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-slate-100 text-slate-700 rounded-full text-[10px] sm:text-[12px] font-black uppercase tracking-tighter">{config.matchType}</span>
-                      {isSetsGame(config.sport)&&(
+                      <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-blue-100 text-blue-700 rounded-full text-[10px] sm:text-[12px] font-black uppercase tracking-tighter">{config.tournamentType===TType.GROUP_LEAGUE?'조별 풀리그':(config.tournamentType===TType.KDK?'🎾 KDK 복식':config.tournamentType)}</span>
+                      {config.tournamentType!==TType.KDK&&<span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-slate-100 text-slate-700 rounded-full text-[10px] sm:text-[12px] font-black uppercase tracking-tighter">{config.matchType}</span>}
+                      {isSetsGame(config.sport)&&config.tournamentType!==TType.KDK&&(
                         <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-amber-100 text-amber-700 rounded-full text-[10px] sm:text-[12px] font-black uppercase tracking-tighter">
                           {(config.sets||3)===1?'단판제':`${config.sets||3}판 ${Math.ceil((config.sets||3)/2)}선승`}
                         </span>
@@ -4609,12 +5041,13 @@ function getSheetUrl() {
                   {canEdit&&(
                     <div className="flex gap-2 w-full md:w-auto">
                       <button onClick={()=>{setStep(1);setView('setup');}} className="flex-1 md:flex-none bg-slate-100 text-slate-600 px-3 sm:px-4 py-2 rounded-xl font-black text-xs sm:text-sm hover:bg-slate-200">🛠️ <span className="hidden sm:inline">설정 수정</span><span className="sm:hidden">설정</span></button>
-                      <button onClick={()=>{setStep(2);setView('setup');}} className="flex-1 md:flex-none bg-slate-100 text-slate-600 px-3 sm:px-4 py-2 rounded-xl font-black text-xs sm:text-sm hover:bg-slate-200">👥 <span className="hidden sm:inline">명단 수정</span><span className="sm:hidden">명단</span></button>
+                      {config.tournamentType!==TType.KDK&&<button onClick={()=>{setStep(2);setView('setup');}} className="flex-1 md:flex-none bg-slate-100 text-slate-600 px-3 sm:px-4 py-2 rounded-xl font-black text-xs sm:text-sm hover:bg-slate-200">👥 <span className="hidden sm:inline">명단 수정</span><span className="sm:hidden">명단</span></button>}
                     </div>
                   )}
                 </div>
                 {config.tournamentType===TType.LEAGUE&&<LeagueView participants={activeParticipants} rounds={generatedLeague} config={config} onMatchClick={m=>canEdit&&setSelectedLeagueMatch({match:m})} onScoreboardLink={canEdit?handleScoreboardLink:null} onAddRound={canEdit?(mode)=>handleAddRound(null,mode):null} onDeleteRound={canEdit?(ri)=>handleDeleteRound(null,ri):null} onUpdateLineup={canEdit?(mid,lu)=>handleUpdateLineup(mid,lu,null):null}/>}
                 {config.tournamentType===TType.TOURNAMENT&&<div className="bg-white p-10 rounded-[3rem] border border-slate-200 shadow-sm"><BracketView matches={generatedMatches} onMatchClick={m=>canEdit&&setSelectedMatch(m)} onScoreboardLink={canEdit?handleScoreboardLink:null}/></div>}
+                {config.tournamentType===TType.KDK&&<KdkView data={generatedKDK} onChange={d=>setGeneratedKDK(d)} canEdit={canEdit}/>}
                 {isGroupType&&(
                   <div className="space-y-16">
                     <GroupStageView groups={generatedGroups} config={config} onMatchClick={(m,gid)=>canEdit&&setSelectedLeagueMatch({match:m,groupId:gid})} onScoreboardLink={canEdit?handleScoreboardLink:null} onAddRound={canEdit?(gid,mode)=>handleAddRound(gid,mode):null} onDeleteRound={canEdit?(gid,ri)=>handleDeleteRound(gid,ri):null}/>
@@ -4652,9 +5085,10 @@ function getSheetUrl() {
                     <div className="space-y-4">
                       <label className="text-[12px] font-black text-slate-400 uppercase tracking-widest">2. 경기 방식</label>
                       <div className="grid grid-cols-2 gap-3">
-                        {[TType.TOURNAMENT,TType.LEAGUE,TType.GROUP_KNOCKOUT,TType.GROUP_LEAGUE].map(t=>(
-                          <button key={t} onClick={()=>setConfig({...config,tournamentType:t})} className={`p-4 rounded-2xl border-2 text-left transition-all ${config.tournamentType===t?'border-blue-500 bg-blue-50 text-blue-700':'border-slate-100 text-slate-500 hover:border-blue-200'}`}>
-                            <p className="font-black text-base">{t==='TOURNAMENT'?'토너먼트':(t==='LEAGUE'?'풀리그':(t==='GROUP_KNOCKOUT'?'리그+본선':'조별 풀리그'))}</p>
+                        {[TType.TOURNAMENT,TType.LEAGUE,TType.GROUP_KNOCKOUT,TType.GROUP_LEAGUE,TType.KDK].map(t=>(
+                          <button key={t} onClick={()=>setConfig({...config,tournamentType:t,...(t===TType.KDK?{sport:'pickleball',matchType:'doubles'}:{})})} className={`p-4 rounded-2xl border-2 text-left transition-all ${config.tournamentType===t?(t===TType.KDK?'border-emerald-500 bg-emerald-50 text-emerald-700':'border-blue-500 bg-blue-50 text-blue-700'):'border-slate-100 text-slate-500 hover:border-blue-200'} ${t===TType.KDK?'col-span-2':''}`}>
+                            <p className="font-black text-base">{t==='TOURNAMENT'?'토너먼트':(t==='LEAGUE'?'풀리그':(t==='GROUP_KNOCKOUT'?'리그+본선':(t==='GROUP_LEAGUE'?'조별 풀리그':'🎾 KDK 복식 (라운드 로빈)')))}</p>
+                            {t==='KDK'&&<p className="text-[11px] font-bold text-emerald-600/70 mt-0.5">피클볼 수업용 · 그룹별 복식 로테이션 + 순위표</p>}
                           </button>
                         ))}
                       </div>
@@ -4677,7 +5111,7 @@ function getSheetUrl() {
                         <p className="text-[11px] text-slate-500">예: 2명 선택 → 각 조 1·2위 본선 진출. 같은 조 출신은 1라운드에서 만나지 않게 자동 배치됩니다.</p>
                       </div>
                     )}
-                    {isSetsGame(config.sport)&&(
+                    {isSetsGame(config.sport)&&config.tournamentType!==TType.KDK&&(
                       <div className="space-y-4">
                         <label className="text-[12px] font-black text-slate-400 uppercase tracking-widest">3. 세트 방식 <span className="text-slate-300">({SPORTS_LIST.find(s=>s.id===config.sport)?.name})</span></label>
                         <div className="grid grid-cols-3 gap-3">
@@ -4782,7 +5216,12 @@ function getSheetUrl() {
                       </div>
                     )}
 
-                    <button onClick={()=>setStep(2)} className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black text-xl hover:bg-slate-800 transition-all">다음 단계로</button>
+                    <button onClick={()=>{
+                      if(config.tournamentType===TType.KDK){
+                        if(!generatedKDK) setGeneratedKDK(initialKdkData());
+                        setView('active');
+                      } else setStep(2);
+                    }} className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black text-xl hover:bg-slate-800 transition-all">{config.tournamentType===TType.KDK?'🎾 KDK 만들기':'다음 단계로'}</button>
                   </section>
                 )}
                 {step===2&&(
