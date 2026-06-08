@@ -4379,11 +4379,40 @@ function getSheetUrl() {
       };
 
       // 구글 시트로 결과 내보내기
+      // KDK → 조별 풀리그 형식으로 변환 (기존 GAS/CSV 그룹 포맷 재사용)
+      const kdkToGroups=()=>{
+        const scoresAll=(generatedKDK&&generatedKDK.scores)||{};
+        return ((generatedKDK&&generatedKDK.results)||[]).map(o=>{
+          const g=((generatedKDK&&generatedKDK.groups)||[]).find(x=>x.id===o.groupId)||{name:o.groupId};
+          const gsc=scoresAll[o.groupId]||{};
+          const res=o.result||{};
+          const st={};
+          (res.perPlayer||[]).forEach(p=>{st[p.name]={participantId:p.name,name:p.name,played:0,win:0,draw:0,loss:0,gf:0,ga:0,gd:0,pts:0};});
+          const rounds=(res.rounds||[]).map(rd=>{
+            const c=gsc[rd.round]; const a=c?parseInt(c.a,10):NaN,b=c?parseInt(c.b,10):NaN; const done=!isNaN(a)&&!isNaN(b);
+            if(done){
+              const apply=(names,my,opp)=>(names||[]).forEach(n=>{const t=st[n];if(!t)return;t.played++;t.gf+=my;t.ga+=opp;t.gd=t.gf-t.ga;if(my>opp){t.win++;t.pts+=2;}else if(my<opp){t.loss++;}else{t.draw++;t.pts++;}});
+              apply(rd.teamA,a,b); apply(rd.teamB,b,a);
+            }
+            return {roundNumber:rd.round,matches:[{id:`kdk-${o.groupId}-r${rd.round}`,
+              home:{id:`h-${o.groupId}-${rd.round}`,name:(rd.teamA||[]).join('·')},
+              away:{id:`a-${o.groupId}-${rd.round}`,name:(rd.teamB||[]).join('·')},
+              status:done?'completed':'pending',scoreHome:done?a:0,scoreAway:done?b:0}]};
+          });
+          const standings=Object.values(st).sort((x,y)=>y.pts-x.pts||y.gd-x.gd||y.gf-x.gf);
+          return {id:o.groupId,name:g.name,participants:(res.perPlayer||[]).map(p=>({id:p.name,name:p.name})),rounds,standings};
+        });
+      };
+
       const handleExportToSheets=()=>{
         const sm=isSetsGame(config.sport);
         const standings=config.tournamentType===TType.LEAGUE
           ?calculateStandings(activeParticipants,generatedLeague,sm):null;
-        const rec={config,participants,activeParticipants,generatedMatches,generatedLeague,generatedGroups,leagueStandings:standings};
+        let rec={config,participants,activeParticipants,generatedMatches,generatedLeague,generatedGroups,leagueStandings:standings};
+        // KDK는 기존 GAS가 모르므로, 조별 풀리그 형식으로 변환해 전송
+        if(config.tournamentType===TType.KDK&&generatedKDK){
+          rec={...rec, config:{...config,tournamentType:TType.GROUP_LEAGUE}, generatedGroups:kdkToGroups()};
+        }
         setSaving(true);
         gasCall('exportToSheets',{data:JSON.stringify(rec)})
           .then(r=>{setSaving(false);alert(`✅ 구글 시트에 저장됐습니다!\n시트 이름: "${r.sheetName}"`)})
@@ -4426,6 +4455,31 @@ function getSheetUrl() {
               csv+=`${label},${t1},${t2},${w},${m.status==='completed'?m.score1+':'+m.score2:'-'}\n`;
             });
           }
+        }
+        if(config.tournamentType===TType.KDK&&generatedKDK&&generatedKDK.results){
+          const scoresAll=generatedKDK.scores||{};
+          generatedKDK.results.forEach(o=>{
+            const g=(generatedKDK.groups||[]).find(x=>x.id===o.groupId)||{name:o.groupId};
+            const gsc=scoresAll[o.groupId]||{};
+            const res=o.result||{};
+            // 개인 순위 집계 (승점 2/1/0, 총득점=본인 팀 점수 합)
+            const st={};
+            (res.perPlayer||[]).forEach(p=>{st[p.name]={name:p.name,played:0,win:0,draw:0,loss:0,pf:0,pa:0,pts:0};});
+            (res.rounds||[]).forEach(rd=>{
+              const c=gsc[rd.round]; if(!c)return; const a=parseInt(c.a,10),b=parseInt(c.b,10); if(isNaN(a)||isNaN(b))return;
+              const apply=(names,my,opp)=>(names||[]).forEach(n=>{const t=st[n];if(!t)return;t.played++;t.pf+=my;t.pa+=opp;if(my>opp){t.win++;t.pts+=2;}else if(my<opp){t.loss++;}else{t.draw++;t.pts++;}});
+              apply(rd.teamA,a,b); apply(rd.teamB,b,a);
+            });
+            const rows=Object.values(st).map(t=>({...t,avg:t.played?+(t.pf/t.played).toFixed(2):0})).sort((x,y)=>y.pts-x.pts||y.avg-x.avg||y.pf-x.pf);
+            csv+=`=== [${g.name} 순위] ===\n순위,이름,경기수,승,무,패,총득점,실점,평균득점,승점\n`;
+            rows.forEach((s,i)=>csv+=`${i+1},${s.name},${s.played},${s.win},${s.draw},${s.loss},${s.pf},${s.pa},${s.avg},${s.pts}\n`);
+            csv+=`\n[${g.name} 경기표]\n라운드,팀 A,팀 B,점수,대기\n`;
+            (res.rounds||[]).forEach(rd=>{
+              const c=gsc[rd.round]; const hasS=c&&c.a!==''&&c.a!=null&&c.b!==''&&c.b!=null;
+              csv+=`${rd.round},${(rd.teamA||[]).join('·')},${(rd.teamB||[]).join('·')},${hasS?`${c.a}:${c.b}`:'-'},${(rd.waiting||[]).join(' ')}\n`;
+            });
+            csv+='\n';
+          });
         }
         const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
         const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`${config.name||'match'}_report.csv`;a.click();
