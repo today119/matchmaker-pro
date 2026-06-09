@@ -516,6 +516,38 @@
       return rounds;
     }
 
+    // 🧑‍⚖️ 라운드별 심판 자동배정 — 같은 조에서 그 라운드에 안 뛰는(대기/휴식) 출석 학생 중 균등 배정
+    function assignRefsToRounds(rounds, participants){
+      const present=(participants||[]).filter(p=>p&&!p.absent&&!String(p.id).startsWith('bye'));
+      const refCount={}; present.forEach(p=>refCount[p.id]=0);
+      return (rounds||[]).map(r=>{
+        const matchPlayers=(r.matches||[]).map(m=>{
+          const ids=[];
+          if(m.home&&!String(m.home.id).startsWith('bye')) ids.push(m.home.id);
+          if(m.away&&!String(m.away.id).startsWith('bye')) ids.push(m.away.id);
+          return ids;
+        });
+        const playingThisRound=new Set(matchPlayers.flat());
+        const newMatches=(r.matches||[]).map((m,mi)=>{
+          const bye=String(m.home.id).startsWith('bye')||String(m.away.id).startsWith('bye');
+          if(bye) return m;
+          const inThis=new Set(matchPlayers[mi]);
+          const cands=present.filter(p=>!inThis.has(p.id));
+          if(cands.length===0) return {...m, referee:null};
+          cands.sort((a,b)=>{
+            if(refCount[a.id]!==refCount[b.id]) return refCount[a.id]-refCount[b.id];     // 적게 한 사람 먼저
+            const aRest=!playingThisRound.has(a.id), bRest=!playingThisRound.has(b.id);
+            if(aRest!==bRest) return aRest?-1:1;                                            // 그 라운드 쉬는 학생 우선
+            return (a.name||'').localeCompare(b.name||'');
+          });
+          const chosen=cands[0];
+          refCount[chosen.id]++;
+          return {...m, referee:{id:chosen.id, name:chosen.name}};
+        });
+        return {...r, matches:newMatches};
+      });
+    }
+
     // ▸ gf/ga = 기본은 세트 승수, 하지만 세트제 경기는 setScores가 있으면 실제 점수 합계
     // ▸ pf/pa = 항상 실제 점수 합계 (세트제) 또는 단일 점수 (비세트제)
     // ▸ pts = 승 3점, 무 1점, 패 1점 (탁구처럼 모든 경기 출전 보상)
@@ -1068,7 +1100,8 @@
                       };
 
                       return (
-                        <div key={`r${ri}-m${mi}-${m.id}`} className="flex gap-1.5 items-stretch">
+                        <div key={`r${ri}-m${mi}-${m.id}`}>
+                          <div className="flex gap-1.5 items-stretch">
                           {!isTeamMatch&&(<span className={`w-9 shrink-0 rounded-lg flex items-center justify-center text-base font-black ${hasAbsent?'bg-amber-400 text-white':'bg-blue-600 text-white'}`}>{matchNo}</span>)}
                           {isTeamMatch ? (
                             /* 단체전: 팀명 헤더 + 슬롯별 인라인 편집 */
@@ -1103,6 +1136,8 @@
                               📺
                             </button>
                           )}
+                          </div>
+                          {!isTeamMatch&&m.referee&&m.referee.name&&<div className="text-[11px] font-bold text-indigo-600 pl-11 mt-0.5">🧑‍⚖️ 심판 {m.referee.name}</div>}
                         </div>
                       );
                     })}
@@ -1313,7 +1348,8 @@
                   ? 'bg-amber-50 border-amber-300'
                   : (done?'bg-slate-50 border-slate-100':'bg-white border-slate-100 shadow-sm');
                 return (
-                  <div key={`r${ri}-m${mi}-${m.id}`} className="flex gap-1 items-stretch">
+                  <div key={`r${ri}-m${mi}-${m.id}`}>
+                    <div className="flex gap-1 items-stretch">
                     <span className={`w-8 shrink-0 rounded flex items-center justify-center text-base font-black ${hasAbsent?'bg-amber-400 text-white':'bg-blue-600 text-white'}`}>{matchNo}</span>
                     <button onClick={()=>onMatchClick(m,group.id)}
                       className={`flex-1 flex justify-between items-center px-2.5 py-2 rounded-lg text-base transition-all hover:brightness-95 border ${baseColor}`}>
@@ -1335,6 +1371,8 @@
                         📺
                       </button>
                     )}
+                    </div>
+                    {m.referee&&m.referee.name&&<div className="text-[11px] font-bold text-indigo-600 pl-9 mt-0.5">🧑‍⚖️ 심판 {m.referee.name}</div>}
                   </div>
                 );
               })}
@@ -4395,6 +4433,16 @@ function getSheetUrl() {
         })));
       };
 
+      // 🧑‍⚖️ 라운드별 심판 자동배정 (출석 학생 중 같은 조 대기자 우선, 균등)
+      const handleAssignReferees=()=>{
+        if(!window.confirm('현재 출결을 기준으로 라운드별 심판을 자동배정합니다.\n(기존 심판 배정은 새로 덮어씁니다)\n진행할까요?')) return;
+        if(isGroupType){
+          setGeneratedGroups(prev=>prev.map(g=>({...g, rounds:assignRefsToRounds(g.rounds||[], g.participants||[])})));
+        } else if(config.tournamentType===TType.LEAGUE){
+          setGeneratedLeague(prev=>assignRefsToRounds(prev||[], activeParticipants));
+        }
+      };
+
       // 대시보드로 나가기 전 즉시 저장 (300ms 디바운스 취소 방지)
       const goToDashboard=()=>{
         if(currentId&&view==='active'){
@@ -4704,6 +4752,12 @@ function getSheetUrl() {
                         </button>
                       );
                     })()}
+                    {(config.tournamentType===TType.LEAGUE||isGroupType)&&(
+                      <button onClick={handleAssignReferees} title="출석 기준 라운드별 심판 자동배정 (같은 조 대기 학생)"
+                        className="bg-indigo-600 text-white px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl font-black text-sm hover:bg-indigo-700 shadow-md active:scale-95 flex items-center gap-1">
+                        <span>🧑‍⚖️</span><span className="hidden sm:inline">심판배정</span>
+                      </button>
+                    )}
                     <button onClick={handleShareCurrent} title="공유 링크"
                       className="bg-blue-600 text-white px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl font-black text-sm hover:bg-blue-700 shadow-md active:scale-95">
                       <span>🔗</span><span className="hidden sm:inline ml-1">공유</span>
