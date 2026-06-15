@@ -3719,6 +3719,13 @@ function getSheetUrl() {
       function addGroup(){ update({ groups: [...groups, { id:'kg'+Date.now(), name:'그룹 '+(groups.length+1), color: COLOR_CYCLE[groups.length%COLOR_CYCLE.length], roster:'' }] }); }
 
       function generate(){
+        // ⚠️ 재생성 시 입력된 점수가 모두 삭제되므로, 점수가 있으면 먼저 확인
+        const hasScores = Object.values(scores||{}).some(g =>
+          Object.values(g||{}).some(c => c && ((c.a!=='' && c.a!=null) || (c.b!=='' && c.b!=null))));
+        if (results && hasScores &&
+            !window.confirm('⚠️ 이미 입력한 점수가 있습니다.\n\n로테이션을 다시 생성하면 경기 순서가 바뀌고\n입력한 점수가 모두 삭제됩니다.\n\n계속하시겠습니까?')) {
+          return;
+        }
         const out = groups.map((g,idx)=>{
           const names = rosterToNames(g.roster);
           const result = window.RoundRobinDoubles.generateGroupSchedule(names, {
@@ -4040,6 +4047,14 @@ function getSheetUrl() {
         if(remoteUpdateRef.current){ remoteUpdateRef.current=false; return; }
         // 다른 기기/탭에서 이 대회를 삭제했다면 부활시키지 않음
         if(userTournaments.length > 0 && !userTournaments.find(t=>t.id===currentId)) return;
+        // 🛡️ KDK 소실 방지: 이미 결과가 저장된 대회를 "빈 상태"로 덮어쓰지 않음
+        //   (빈 화면으로 열린 다른 기기의 자동저장이 멀쩡한 기록을 지우는 cascade 차단)
+        if(config.tournamentType===TType.KDK){
+          const existing = userTournaments.find(t=>t.id===currentId);
+          const existingHas = existing && existing.generatedKDK && (existing.generatedKDK.results||[]).length > 0;
+          const currentHas  = generatedKDK && (generatedKDK.results||[]).length > 0;
+          if(existingHas && !currentHas) return;
+        }
         if(saveTimerRef.current)clearTimeout(saveTimerRef.current);
         saveTimerRef.current=setTimeout(()=>{
           const record=buildRecord();
@@ -4086,7 +4101,15 @@ function getSheetUrl() {
           setGeneratedMatches(data.generatedMatches||[]);
           setGeneratedLeague(data.generatedLeague||[]);
           setGeneratedGroups(data.generatedGroups||[]);
-          if(data.generatedKDK!==undefined) setGeneratedKDK(data.generatedKDK||null);
+          if(data.generatedKDK!==undefined){
+            // 🛡️ 원격이 비었는데 로컬엔 결과가 있으면 로컬 유지 (빈 값 전파로 인한 소실 방지)
+            const remoteHas = data.generatedKDK && (data.generatedKDK.results||[]).length > 0;
+            setGeneratedKDK(prev=>{
+              const localHas = prev && (prev.results||[]).length > 0;
+              if(localHas && !remoteHas) return prev;
+              return data.generatedKDK||null;
+            });
+          }
         });
       };
 
