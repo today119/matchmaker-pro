@@ -138,20 +138,27 @@
           }
         } catch(e) { /* 무시 */ }
       }
-      // 🛡️ KDK 소실 방지: 저장하려는 generatedKDK가 비었는데 Firebase엔 결과가 있으면 기존 것 보존
-      //   (빈 화면 자동저장·재편성 등 어떤 경로든 멀쩡한 기록을 빈 값으로 덮어쓰는 것을 원천 차단)
-      if (clean.config && clean.config.tournamentType === 'KDK') {
-        const newHas = clean.generatedKDK && (clean.generatedKDK.results || []).length > 0;
-        if (!newHas) {
-          try {
-            const snap = await db.ref('tournaments/'+id+'/generatedKDK').once('value');
-            const remote = snap.val();
-            if (remote && (remote.results || []).length > 0) {
-              clean.generatedKDK = remote;
-              console.warn('[fbSave] KDK 빈 저장 차단 — 기존 결과 보존:', id);
+      // 🛡️ 데이터 소실 방지(모든 타입): 저장할 데이터 필드가 비었는데 Firebase엔 있으면 기존 것 보존
+      //   (자동저장·폴더이동·보관 등 어떤 경로로 빈 값이 와도 멀쩡한 기록을 덮어쓰는 것을 원천 차단)
+      const kdkEmpty    = !(clean.generatedKDK     && (clean.generatedKDK.results || []).length > 0);
+      const leagueEmpty = !(clean.generatedLeague  && clean.generatedLeague.length  > 0);
+      const groupsEmpty = !(clean.generatedGroups  && clean.generatedGroups.length  > 0);
+      const matchesEmpty= !(clean.generatedMatches && clean.generatedMatches.length > 0);
+      if (kdkEmpty || leagueEmpty || groupsEmpty || matchesEmpty) {
+        try {
+          const snap = await db.ref('tournaments/'+id).once('value');
+          const remote = snap.val();
+          if (remote) {
+            if (kdkEmpty     && remote.generatedKDK     && (remote.generatedKDK.results || []).length > 0) { clean.generatedKDK = remote.generatedKDK; }
+            if (leagueEmpty  && (remote.generatedLeague  || []).length > 0) { clean.generatedLeague  = remote.generatedLeague; }
+            if (groupsEmpty  && (remote.generatedGroups  || []).length > 0) { clean.generatedGroups  = remote.generatedGroups; }
+            if (matchesEmpty && (remote.generatedMatches || []).length > 0) { clean.generatedMatches = remote.generatedMatches; }
+            if (clean.generatedKDK!==record.generatedKDK || clean.generatedLeague!==record.generatedLeague ||
+                clean.generatedGroups!==record.generatedGroups || clean.generatedMatches!==record.generatedMatches) {
+              console.warn('[fbSave] 빈 값 저장 차단 — 기존 데이터 보존:', id);
             }
-          } catch(e) { /* 무시 */ }
-        }
+          }
+        } catch(e) { /* 무시 */ }
       }
       lsSave(id, clean); // 즉시 localStorage에 저장
       try {
@@ -4141,7 +4148,8 @@ function getSheetUrl() {
         setUserTournaments(prev=>{
           const updated=prev.map(t=>t.id===id?{...t,isArchived:!t.isArchived}:t);
           const record=updated.find(t=>t.id===id);
-          if(record) fbSave(id,record).catch(console.error);
+          // 🛡️ isArchived만 직접 갱신 — 전체 레코드 재저장으로 인한 데이터 소실 방지
+          if(record) db.ref('tournaments/'+id+'/isArchived').set(!!record.isArchived).catch(console.error);
           return updated;
         });
       };
@@ -4170,34 +4178,23 @@ function getSheetUrl() {
         delete newFolders[folderId];
         setFolders(newFolders);
         fbSaveFolders(newFolders);
-        // 대회들의 folderId 제거
+        // 대회들의 folderId 제거 — 🛡️ folderId만 직접 갱신 (전체 레코드 재저장 금지)
         setUserTournaments(prev=>{
-          const updated = prev.map(t=>{
+          prev.forEach(t=>{
             if(t.folderId === folderId){
-              const updatedT = {...t, folderId: null};
-              fbSave(t.id, updatedT).catch(console.error);
-              return updatedT;
+              db.ref('tournaments/'+t.id+'/folderId').set(null).catch(console.error);
             }
-            return t;
           });
-          return updated;
+          return prev.map(t=> t.folderId===folderId ? {...t, folderId:null} : t);
         });
         if(currentFolderId === folderId) setCurrentFolderId(null);
       };
 
       // 대회를 폴더로 이동
       const handleMoveTournament = (tournamentId, folderId) => {
-        setUserTournaments(prev=>{
-          const updated = prev.map(t=>{
-            if(t.id === tournamentId){
-              const updatedT = {...t, folderId: folderId || null};
-              fbSave(t.id, updatedT).catch(console.error);
-              return updatedT;
-            }
-            return t;
-          });
-          return updated;
-        });
+        setUserTournaments(prev=> prev.map(t=> t.id===tournamentId ? {...t, folderId: folderId||null} : t));
+        // 🛡️ folderId만 직접 갱신 — 전체 레코드 재저장으로 인한 데이터 소실 방지
+        db.ref('tournaments/'+tournamentId+'/folderId').set(folderId||null).catch(console.error);
         setMoveDialogTour(null);
       };
 
