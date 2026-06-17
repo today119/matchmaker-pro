@@ -1,7 +1,7 @@
 // MatchMaker Pro Service Worker
 // 오프라인 모드 지원 + 빠른 로딩을 위한 캐시 관리
 
-const CACHE_VERSION = 'matchmaker-pro-v1.0.30';
+const CACHE_VERSION = 'matchmaker-pro-v1.0.31';
 const CACHE_NAME = `${CACHE_VERSION}-static`;
 
 // 앱 핵심 파일
@@ -20,7 +20,6 @@ const CDN_ASSETS = [
   'https://cdn.tailwindcss.com',
   'https://unpkg.com/react@18/umd/react.production.min.js',
   'https://unpkg.com/react-dom@18/umd/react-dom.production.min.js',
-  'https://unpkg.com/@babel/standalone/babel.min.js',
   'https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js',
   'https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js',
 ];
