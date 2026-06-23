@@ -59,8 +59,8 @@
     // 기본값은 김선빵 운영 환경. 다른 사용자는 도움말 페이지에서 본인 것으로 교체
     const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbw9s3SnfPNm_IadrU9csVZQOO6-9_z91dNp4r3uRNRY_REROqDp4Y7Uedna6EmDGgEO/exec';
     const DEFAULT_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1CwzH6sgSndczhuk_RL4S4PctvqtjF6Wg-uonyq3AJy4/edit';
-    window.GAS_API_URL = localStorage.getItem('matchmaker_gas_url') || DEFAULT_GAS_URL;
-    window.SHEET_URL = localStorage.getItem('matchmaker_sheet_url') || DEFAULT_SHEET_URL;
+    window.GAS_API_URL = (function(){try{return localStorage.getItem('matchmaker_gas_url')}catch(e){return null}})() || DEFAULT_GAS_URL;
+    window.SHEET_URL = (function(){try{return localStorage.getItem('matchmaker_sheet_url')}catch(e){return null}})() || DEFAULT_SHEET_URL;
   </script>
 
   <script>
@@ -5457,7 +5457,8 @@ const App = () => {
       activeParticipants,
       generatedMatches,
       generatedLeague,
-      generatedGroups
+      generatedGroups,
+      generatedKDK
     };
     fbSaveShare(rec).then(shareId => {
       var _navigator$clipboard2;
