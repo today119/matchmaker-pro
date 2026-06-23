@@ -5145,6 +5145,7 @@ const App = () => {
           setGeneratedGroups(data.generatedGroups || []);
           setGeneratedKDK(data.generatedKDK || null);
           setView('share');
+              if (data.id && data.id !== 'shared') { try { db.ref('tournaments/' + data.id).on('value', function (snap) { var live = snap.val(); if (!live) return; remoteUpdateRef.current = true; if (live.config) setConfig(live.config); if (live.participants) setParticipants(live.participants); if (live.activeParticipants) setActiveParticipants(live.activeParticipants); setGeneratedMatches(live.generatedMatches || []); setGeneratedLeague(live.generatedLeague || []); setGeneratedGroups(live.generatedGroups || []); setGeneratedKDK(live.generatedKDK || null); }); } catch (e) {} }
         }
         setLoading(false);
       }).catch(() => setLoading(false));
