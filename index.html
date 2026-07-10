@@ -656,6 +656,16 @@ function autoAdvanceByes(matches, prefix) {
     }
   }
 }
+// 슬롯 배열(각 자리에 팀 또는 null=부전승)로 대진표 직접 구성 (수동 배정용)
+function buildBracketFromSlots(slots, prefix = 'r') {
+  const p2 = slots.length;
+  const matches = [];
+  for (let i = 0; i < p2; i += 2) matches.push({ id: `${prefix}1-m${i / 2}`, participant1: slots[i] || null, participant2: slots[i + 1] || null, round: 1, matchIndex: i / 2, status: 'pending' });
+  let round = 2, mpr = p2 / 4;
+  while (mpr >= 1) { for (let i = 0; i < mpr; i++) matches.push({ id: `${prefix}${round}-m${i}`, participant1: null, participant2: null, round, matchIndex: i, status: 'pending' }); round++; mpr /= 2; }
+  autoAdvanceByes(matches, prefix);
+  return matches;
+}
 function generateLeagueSchedule(participants, groupPrefix = '', teamRounds = 1) {
   const teams = [...participants];
   const isOdd = teams.length % 2 !== 0;
@@ -5099,6 +5109,48 @@ const initialKdkData = () => ({
   results: null,
   scores: {}
 });
+// 🏆 대진 수정 — 1라운드 각 자리에 팀 배정(수동) + 랜덤 재추첨
+const BracketEditModal = ({ teams, matches, onApply, onClose }) => {
+  const list = (teams || []).filter(t => t && t.id);
+  const p2 = Math.pow(2, Math.ceil(Math.log2(Math.max(list.length, 2))));
+  const init = () => {
+    const arr = new Array(p2).fill(null);
+    (matches || []).filter(m => m.round === 1).forEach(m => { arr[m.matchIndex * 2] = m.participant1 || null; arr[m.matchIndex * 2 + 1] = m.participant2 || null; });
+    return arr;
+  };
+  const [slots, setSlots] = useState(init);
+  const idOf = t => t && t.id ? t.id : '__bye__';
+  const setSlot = (i, val) => { const t = val === '__bye__' ? null : list.find(x => x.id === val); setSlots(prev => prev.map((s, idx) => idx === i ? t : s)); };
+  const shuffle = () => { const pool = [...list].sort(() => Math.random() - 0.5); const order = getSeedOrder(p2); const arr = new Array(p2).fill(null); pool.forEach((p, i) => { const si = order.indexOf(i + 1); if (si !== -1) arr[si] = p; }); setSlots(arr); };
+  const apply = () => {
+    const used = slots.filter(Boolean).map(t => t.id);
+    if (new Set(used).size !== used.length) { alert('같은 팀이 두 자리에 배정됐습니다. 확인해주세요.'); return; }
+    if (!window.confirm('이 대진표로 적용합니다.\n(이미 입력한 경기 점수는 초기화됩니다)\n계속할까요?')) return;
+    onApply(buildBracketFromSlots(slots));
+  };
+  const teamSelect = i => React.createElement("select", {
+    value: idOf(slots[i]),
+    onChange: e => setSlot(i, e.target.value),
+    className: "flex-1 min-w-0 border-2 border-slate-200 rounded-lg px-2 py-1.5 text-xs sm:text-sm font-bold bg-white"
+  }, React.createElement("option", { value: '__bye__' }, '— 부전승(Bye) —'), list.map(t => React.createElement("option", { key: t.id, value: t.id }, t.name)));
+  return React.createElement("div", { className: "fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4" },
+    React.createElement("div", { className: "bg-white rounded-2xl sm:rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden max-h-[92vh] flex flex-col" },
+      React.createElement("div", { className: "bg-slate-900 p-4 text-white flex justify-between items-center shrink-0" },
+        React.createElement("h3", { className: "text-base sm:text-xl font-black italic uppercase" }, "🏆 대진 수정"),
+        React.createElement("button", { onClick: onClose, className: "text-slate-400 hover:text-white text-sm" }, "닫기")),
+      React.createElement("div", { className: "p-4 space-y-2 overflow-y-auto custom-scrollbar" },
+        React.createElement("div", { className: "flex items-center justify-between gap-2 mb-1" },
+          React.createElement("p", { className: "text-[12px] font-bold text-slate-500" }, "1라운드 각 자리에 팀 배정 (부전승=Bye)"),
+          React.createElement("button", { onClick: shuffle, className: "text-[12px] font-black bg-amber-500 text-white px-3 py-1.5 rounded-lg hover:bg-amber-600 shrink-0" }, "🎲 랜덤 재추첨")),
+        Array.from({ length: p2 / 2 }, (_, mi) => React.createElement("div", { key: mi, className: "flex items-center gap-1.5 sm:gap-2 bg-slate-50 p-2 rounded-xl border border-slate-100" },
+          React.createElement("span", { className: "text-[11px] font-black text-slate-400 w-7 shrink-0 text-center" }, `M${mi + 1}`),
+          teamSelect(mi * 2),
+          React.createElement("span", { className: "text-[11px] font-black text-slate-300 shrink-0" }, "vs"),
+          teamSelect(mi * 2 + 1)))),
+      React.createElement("div", { className: "p-4 border-t border-slate-100 shrink-0 flex gap-2" },
+        React.createElement("button", { onClick: onClose, className: "flex-1 py-3 text-slate-400 font-bold text-sm" }, "취소"),
+        React.createElement("button", { onClick: apply, className: "flex-1 py-3 bg-indigo-600 text-white rounded-xl font-black hover:bg-indigo-700 text-sm sm:text-base" }, "✅ 이 대진으로 적용"))));
+};
 const App = () => {
   var _SPORTS_LIST$find5;
   const [loading, setLoading] = useState(true);
@@ -5130,6 +5182,7 @@ const App = () => {
   const [selectedLeagueMatch, setSelectedLeagueMatch] = useState(null);
   const [scoreboardMatch, setScoreboardMatch] = useState(null);
   const [showAttendance, setShowAttendance] = useState(false);
+  const [showBracketEdit, setShowBracketEdit] = useState(false);
   const saveTimerRef = useRef(null);
   const remoteUpdateRef = useRef(false);
   const isGroupType = config.tournamentType === TType.GROUP_KNOCKOUT || config.tournamentType === TType.GROUP_LEAGUE;
@@ -6689,7 +6742,14 @@ const App = () => {
     className: "hidden sm:inline"
   }, "설정 수정"), React.createElement("span", {
     className: "sm:hidden"
-  }, "설정")), config.tournamentType !== TType.KDK && React.createElement("button", {
+  }, "설정")), config.tournamentType === TType.TOURNAMENT && React.createElement("button", {
+    onClick: () => setShowBracketEdit(true),
+    className: "flex-1 md:flex-none bg-indigo-100 text-indigo-700 px-3 sm:px-4 py-2 rounded-xl font-black text-xs sm:text-sm hover:bg-indigo-200"
+  }, "🏆 ", React.createElement("span", {
+    className: "hidden sm:inline"
+  }, "대진 수정"), React.createElement("span", {
+    className: "sm:hidden"
+  }, "대진")), config.tournamentType !== TType.KDK && React.createElement("button", {
     onClick: () => {
       setStep(2);
       setView('setup');
@@ -7157,6 +7217,11 @@ const App = () => {
     })(),
     onToggle: handleToggleAttendance,
     onClose: () => setShowAttendance(false)
+  }), showBracketEdit && React.createElement(BracketEditModal, {
+    teams: activeParticipants,
+    matches: generatedMatches,
+    onApply: nm => { setGeneratedMatches(nm); setShowBracketEdit(false); },
+    onClose: () => setShowBracketEdit(false)
   }));
 };
 ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App, null));
