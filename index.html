@@ -1751,6 +1751,8 @@ const MatchResultModal = ({
     setS1((_match$score3 = match.score1) !== null && _match$score3 !== void 0 ? _match$score3 : 0);
     setS2((_match$score4 = match.score2) !== null && _match$score4 !== void 0 ? _match$score4 : 0);
   }, [match]);
+  const [boardSlot, setBoardSlot] = useState(null);
+  const slotPair = (side, mi) => { const mem = (side && side.members) || []; const p = mem.slice(mi * 2, mi * 2 + 2).map(x => x && x.name).filter(Boolean).join('·'); return p || (side && side.name) || 'TBD'; };
   const applyTeam = () => {
     let w1 = 0,
       w2 = 0;
@@ -1835,7 +1837,11 @@ const MatchResultModal = ({
       className: "w-10 sm:w-12 text-center font-black border rounded p-1 text-sm sm:text-base shrink-0"
     }), React.createElement("span", {
       className: "text-xs sm:text-sm font-bold text-slate-600 truncate flex-1 min-w-0 text-right"
-    }, (_match$participant10 = match.participant2) === null || _match$participant10 === void 0 ? void 0 : _match$participant10.name)));
+    }, (_match$participant10 = match.participant2) === null || _match$participant10 === void 0 ? void 0 : _match$participant10.name)), React.createElement("button", {
+      onClick: () => setBoardSlot({ ri: ri, mi: mi }),
+      className: "w-9 shrink-0 bg-slate-800 text-white rounded-lg text-base leading-none hover:bg-slate-900 active:scale-95",
+      title: "슬롯 스코어보드"
+    }, "📺"))
   })))), React.createElement("div", {
     className: "grid grid-cols-2 gap-3 sm:gap-8 items-center"
   }, [{
@@ -1878,7 +1884,21 @@ const MatchResultModal = ({
   }, "결과 초기화"), React.createElement("button", {
     onClick: onClose,
     className: "w-full py-2.5 sm:py-3 text-slate-400 font-bold text-sm sm:text-base"
-  }, "취소")))));
+  }, "취소")))), boardSlot !== null && React.createElement("div", {
+    className: "fixed inset-0 z-[60] overflow-auto"
+  }, React.createElement(ScoreboardView, {
+    match: { home: { name: slotPair(match.participant1, boardSlot.mi) }, away: { name: slotPair(match.participant2, boardSlot.mi) }, court: '' },
+    config: { name: ((match.participant1 && match.participant1.name) || 'A') + ' vs ' + ((match.participant2 && match.participant2.name) || 'B') + ' · ' + getMatchSlotLabel(config.teamFormat, boardSlot.mi), sport: 'pickleball', sets: 1 },
+    onClose: () => setBoardSlot(null),
+    onScoreSave: (a, b) => {
+      const ns = sub.map(r => r.map(c => ({ ...c })));
+      ns[boardSlot.ri][boardSlot.mi] = { s1: a, s2: b };
+      setSub(ns);
+      let w1 = 0, w2 = 0;
+      ns.forEach(r => { let m1 = 0, m2 = 0; r.forEach(mm => { if (mm.s1 > mm.s2) m1++;else if (mm.s2 > mm.s1) m2++; }); if (m1 > m2) w1++;else if (m2 > m1) w2++; });
+      setS1(w1); setS2(w2); setBoardSlot(null);
+    }
+  })));
 };
 const AttendanceModal = ({
   participants,
