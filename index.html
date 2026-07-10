@@ -5155,10 +5155,19 @@ const BracketEditModal = ({ teams, matches, onApply, onClose }) => {
         React.createElement("button", { onClick: apply, className: "flex-1 py-3 bg-indigo-600 text-white rounded-xl font-black hover:bg-indigo-700 text-sm sm:text-base" }, "✅ 이 대진으로 적용"))));
 };
 // ✏️ 선수 이름 수정 — 팀/대진 그대로, 멤버 이름만 편집
-const NameEditModal = ({ teams, onSave, onClose }) => {
+const NameEditModal = ({ teams, participants, onSave, onClose }) => {
   const [names, setNames] = useState(() => { const m = {}; (teams || []).forEach(t => ((t && t.members) || []).forEach(mem => { if (mem && mem.id) m[mem.id] = mem.name || ''; })); return m; });
   const [orig] = useState(() => { const m = {}; (teams || []).forEach(t => ((t && t.members) || []).forEach(mem => { if (mem && mem.id) m[mem.id] = mem.name || ''; })); return m; });
   const setName = (id, v) => setNames(prev => ({ ...prev, [id]: v }));
+  const cls = n => String(n || '').trim().split(/\s+/)[0];
+  const rosterCount = (participants || []).length;
+  const fillFromRoster = () => {
+    const byClass = {};
+    (participants || []).forEach(p => { if (p && p.name) { const c = cls(p.name); (byClass[c] = byClass[c] || []).push(p); } });
+    let n = 0;
+    setNames(prev => { const next = { ...prev }; (teams || []).forEach(t => { const pl = byClass[cls(t && t.name)] || []; ((t && t.members) || []).forEach((m, i) => { if (m && m.id && pl[i] && pl[i].name) { next[m.id] = pl[i].name; n++; } }); }); return next; });
+    window.setTimeout(() => alert('명단에서 ' + n + '명 이름을 불러왔습니다. 확인 후 아래 저장을 눌러주세요.'), 30);
+  };
   return React.createElement("div", { className: "fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4" },
     React.createElement("div", { className: "bg-white rounded-2xl sm:rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden max-h-[92vh] flex flex-col" },
       React.createElement("div", { className: "bg-slate-900 p-4 text-white flex justify-between items-center shrink-0" },
@@ -5166,6 +5175,7 @@ const NameEditModal = ({ teams, onSave, onClose }) => {
         React.createElement("button", { onClick: onClose, className: "text-slate-400 hover:text-white text-sm" }, "닫기")),
       React.createElement("div", { className: "p-4 space-y-4 overflow-y-auto custom-scrollbar" },
         React.createElement("p", { className: "text-[12px] font-bold text-slate-500" }, "팀·대진은 그대로, 이름만 바뀝니다. (자리표시 → 실제 이름)"),
+        rosterCount > 0 && React.createElement("button", { onClick: fillFromRoster, className: "w-full py-2.5 bg-emerald-100 text-emerald-700 rounded-xl font-black text-sm hover:bg-emerald-200 border-2 border-emerald-200" }, "📋 명단에서 이름 채우기 (반+순서 자동 매칭)"),
         (teams || []).map((t, ti) => React.createElement("div", { key: ti, className: "space-y-1.5" },
           React.createElement("p", { className: "text-[12px] font-black text-indigo-600 uppercase" }, t && t.name),
           ((t && t.members) || []).map((mem, mj) => mem && mem.id && React.createElement("div", { key: mj, className: "flex items-center gap-2" },
@@ -7265,6 +7275,7 @@ const App = () => {
     onClose: () => setShowBracketEdit(false)
   }), showNameEdit && React.createElement(NameEditModal, {
     teams: activeParticipants,
+    participants: participants,
     onSave: handleSaveNames,
     onClose: () => setShowNameEdit(false)
   }));
