@@ -2778,16 +2778,19 @@ const DoublesPairingView = ({
 };
 const TeamGroupingView = ({
   participants,
+  existingTeams,
   onComplete,
   onBack
 }) => {
-  const [unassigned, setUnassigned] = useState([...participants]);
-  const [teams, setTeams] = useState([]);
+  const initT = () => (existingTeams || []).filter(t => t && t.members && t.members.length);
+  const initU = () => { const used = new Set(); (existingTeams || []).forEach(t => (t.members || []).forEach(m => m && used.add(m.id))); return [...participants].filter(p => !used.has(p.id)); };
+  const [unassigned, setUnassigned] = useState(initU);
+  const [teams, setTeams] = useState(initT);
   const [selMembers, setSelMembers] = useState([]);
   const [teamName, setTeamName] = useState('');
   useEffect(() => {
-    setUnassigned([...participants]);
-    setTeams([]);
+    setUnassigned(initU());
+    setTeams(initT());
   }, [participants]);
   const toggleMember = p => {
     setSelMembers(prev => prev.find(m => m.id === p.id) ? prev.filter(m => m.id !== p.id) : [...prev, p]);
@@ -5183,6 +5186,27 @@ const BracketEditModal = ({ teams, matches, onApply, onClose }) => {
         React.createElement("button", { onClick: onClose, className: "flex-1 py-3 text-slate-400 font-bold text-sm" }, "취소"),
         React.createElement("button", { onClick: apply, className: "flex-1 py-3 bg-indigo-600 text-white rounded-xl font-black hover:bg-indigo-700 text-sm sm:text-base" }, "✅ 이 대진으로 적용"))));
 };
+// ✏️ 선수 이름 수정 — 팀/대진 그대로, 멤버 이름만 편집
+const NameEditModal = ({ teams, onSave, onClose }) => {
+  const [names, setNames] = useState(() => { const m = {}; (teams || []).forEach(t => ((t && t.members) || []).forEach(mem => { if (mem && mem.id) m[mem.id] = mem.name || ''; })); return m; });
+  const [orig] = useState(() => { const m = {}; (teams || []).forEach(t => ((t && t.members) || []).forEach(mem => { if (mem && mem.id) m[mem.id] = mem.name || ''; })); return m; });
+  const setName = (id, v) => setNames(prev => ({ ...prev, [id]: v }));
+  return React.createElement("div", { className: "fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4" },
+    React.createElement("div", { className: "bg-white rounded-2xl sm:rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden max-h-[92vh] flex flex-col" },
+      React.createElement("div", { className: "bg-slate-900 p-4 text-white flex justify-between items-center shrink-0" },
+        React.createElement("h3", { className: "text-base sm:text-xl font-black italic" }, "✏️ 선수 이름 수정"),
+        React.createElement("button", { onClick: onClose, className: "text-slate-400 hover:text-white text-sm" }, "닫기")),
+      React.createElement("div", { className: "p-4 space-y-4 overflow-y-auto custom-scrollbar" },
+        React.createElement("p", { className: "text-[12px] font-bold text-slate-500" }, "팀·대진은 그대로, 이름만 바뀝니다. (자리표시 → 실제 이름)"),
+        (teams || []).map((t, ti) => React.createElement("div", { key: ti, className: "space-y-1.5" },
+          React.createElement("p", { className: "text-[12px] font-black text-indigo-600 uppercase" }, t && t.name),
+          ((t && t.members) || []).map((mem, mj) => mem && mem.id && React.createElement("div", { key: mj, className: "flex items-center gap-2" },
+            React.createElement("span", { className: "text-[11px] font-bold text-slate-400 w-24 shrink-0 truncate" }, orig[mem.id]),
+            React.createElement("input", { value: names[mem.id] !== undefined ? names[mem.id] : (mem.name || ''), onChange: e => setName(mem.id, e.target.value), className: "flex-1 border-2 border-slate-200 rounded-lg px-2 py-1.5 text-sm font-bold" })))))),
+      React.createElement("div", { className: "p-4 border-t border-slate-100 shrink-0 flex gap-2" },
+        React.createElement("button", { onClick: onClose, className: "flex-1 py-3 text-slate-400 font-bold text-sm" }, "취소"),
+        React.createElement("button", { onClick: () => onSave(names), className: "flex-1 py-3 bg-indigo-600 text-white rounded-xl font-black hover:bg-indigo-700 text-sm sm:text-base" }, "✅ 저장"))));
+};
 const App = () => {
   var _SPORTS_LIST$find5;
   const [loading, setLoading] = useState(true);
@@ -5215,6 +5239,7 @@ const App = () => {
   const [scoreboardMatch, setScoreboardMatch] = useState(null);
   const [showAttendance, setShowAttendance] = useState(false);
   const [showBracketEdit, setShowBracketEdit] = useState(false);
+  const [showNameEdit, setShowNameEdit] = useState(false);
   const saveTimerRef = useRef(null);
   const remoteUpdateRef = useRef(false);
   const isGroupType = config.tournamentType === TType.GROUP_KNOCKOUT || config.tournamentType === TType.GROUP_LEAGUE;
@@ -5727,6 +5752,14 @@ const App = () => {
     } else {
       setGeneratedLeague(prev => renumber(prev || []));
     }
+  };
+  const handleSaveNames = nameMap => {
+    const rename = p => p && nameMap[p.id] !== undefined ? { ...p, name: nameMap[p.id] } : p;
+    const renameTeam = t => t && t.members ? { ...t, members: t.members.map(rename) } : rename(t);
+    setParticipants(prev => prev.map(rename));
+    setActiveParticipants(prev => prev.map(renameTeam));
+    setGeneratedMatches(prev => prev.map(m => ({ ...m, participant1: renameTeam(m.participant1), participant2: renameTeam(m.participant2) })));
+    setShowNameEdit(false);
   };
   const handleToggleAttendance = pid => {
     const flip = p => p.id === pid ? {
@@ -6845,7 +6878,14 @@ const App = () => {
     className: "hidden sm:inline"
   }, "명단 수정"), React.createElement("span", {
     className: "sm:hidden"
-  }, "명단")))), config.tournamentType === TType.LEAGUE && React.createElement(LeagueView, {
+  }, "명단")), config.matchType === 'team' && React.createElement("button", {
+    onClick: () => setShowNameEdit(true),
+    className: "flex-1 md:flex-none bg-indigo-100 text-indigo-700 px-3 sm:px-4 py-2 rounded-xl font-black text-xs sm:text-sm hover:bg-indigo-200"
+  }, "✏️ ", React.createElement("span", {
+    className: "hidden sm:inline"
+  }, "선수 이름"), React.createElement("span", {
+    className: "sm:hidden"
+  }, "이름")))), config.tournamentType === TType.LEAGUE && React.createElement(LeagueView, {
     participants: activeParticipants,
     rounds: generatedLeague,
     config: config,
@@ -7238,6 +7278,7 @@ const App = () => {
     }
   }), step === 5 && React.createElement(TeamGroupingView, {
     participants: participants,
+    existingTeams: activeParticipants,
     onBack: () => setStep(2),
     onComplete: teams => {
       setActiveParticipants(teams);
@@ -7309,6 +7350,10 @@ const App = () => {
     matches: generatedMatches,
     onApply: nm => { setGeneratedMatches(nm); setShowBracketEdit(false); },
     onClose: () => setShowBracketEdit(false)
+  }), showNameEdit && React.createElement(NameEditModal, {
+    teams: activeParticipants,
+    onSave: handleSaveNames,
+    onClose: () => setShowNameEdit(false)
   }));
 };
 ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App, null));
