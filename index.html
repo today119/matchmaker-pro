@@ -1729,45 +1729,62 @@ const MatchResultModal = ({
   match,
   config,
   onClose,
-  onSave
+  onSave,
+  onSlotSave
 }) => {
   var _match$score, _match$score2;
   const isTeam = config.matchType === 'team';
   const tf = TEAM_FORMATS.find(f => f.id === config.teamFormat);
   const nm = (tf === null || tf === void 0 ? void 0 : tf.matches) || 3;
   const nr = config.teamRounds || 1;
+  const loadSub = () => {
+    const src = Array.isArray(match.subScores) ? match.subScores : [];
+    return Array.from({ length: nr }, (_r, ri) => Array.from({ length: nm }, (_m, mi) => {
+      const g = src[ri * nm + mi];
+      return { s1: (g && g.s1) || 0, s2: (g && g.s2) || 0 };
+    }));
+  };
+  const slotsWon = sb => {
+    let w1 = 0, w2 = 0;
+    sb.forEach(r => r.forEach(m => { if (m.s1 > m.s2) w1++;else if (m.s2 > m.s1) w2++; }));
+    return [w1, w2];
+  };
   const [s1, setS1] = useState((_match$score = match.score1) !== null && _match$score !== void 0 ? _match$score : 0);
   const [s2, setS2] = useState((_match$score2 = match.score2) !== null && _match$score2 !== void 0 ? _match$score2 : 0);
-  const [sub, setSub] = useState(Array.from({
-    length: nr
-  }, () => Array.from({
-    length: nm
-  }, () => ({
-    s1: 0,
-    s2: 0
-  }))));
+  const [sub, setSub] = useState(loadSub);
   useEffect(() => {
-    var _match$score3, _match$score4;
-    setS1((_match$score3 = match.score1) !== null && _match$score3 !== void 0 ? _match$score3 : 0);
-    setS2((_match$score4 = match.score2) !== null && _match$score4 !== void 0 ? _match$score4 : 0);
+    if (isTeam) {
+      const sb = loadSub();
+      setSub(sb);
+      const wn = slotsWon(sb);
+      setS1(wn[0]);
+      setS2(wn[1]);
+    } else {
+      var _match$score3, _match$score4;
+      setS1((_match$score3 = match.score1) !== null && _match$score3 !== void 0 ? _match$score3 : 0);
+      setS2((_match$score4 = match.score2) !== null && _match$score4 !== void 0 ? _match$score4 : 0);
+    }
   }, [match]);
   const [boardSlot, setBoardSlot] = useState(null);
   const slotPair = (side, mi) => { const mem = (side && side.members) || []; const p = mem.slice(mi * 2, mi * 2 + 2).map(x => x && x.name).filter(Boolean).join('·'); return p || (side && side.name) || 'TBD'; };
   const applyTeam = () => {
-    let w1 = 0,
-      w2 = 0;
-    sub.forEach(r => {
-      let m1 = 0,
-        m2 = 0;
-      r.forEach(m => {
-        if (m.s1 > m.s2) m1++;else if (m.s2 > m.s1) m2++;
-      });
-      if (m1 > m2) w1++;else if (m2 > m1) w2++;
-    });
-    setS1(w1);
-    setS2(w2);
+    const wn = slotsWon(sub);
+    setS1(wn[0]);
+    setS2(wn[1]);
+  };
+  const collectTouched = () => {
+    const out = [];
+    sub.forEach((r, ri) => r.forEach((m, mi) => { if (m.s1 > 0 || m.s2 > 0) out.push({ slot: ri * nm + mi, s1: m.s1, s2: m.s2 }); }));
+    return out;
   };
   const handleSave = () => {
+    if (isTeam) {
+      const touched = collectTouched();
+      if (!touched.length) { alert('입력된 슬롯 결과가 없습니다.'); return; }
+      onSlotSave && onSlotSave(match.id, touched);
+      onClose();
+      return;
+    }
     var _match$participant9, _match$participant0;
     if (s1 === s2) {
       alert('토너먼트에서는 무승부가 허용되지 않습니다.');
@@ -1868,11 +1885,12 @@ const MatchResultModal = ({
     }, React.createElement("input", {
       type: "number",
       value: side.s,
-      onChange: e => side.setS(parseInt(e.target.value) || 0),
-      className: `w-full text-center text-2xl sm:text-3xl font-black py-2 sm:py-3 border-2 border-slate-100 rounded-xl focus:border-${side.col}-500 outline-none`
+      readOnly: isTeam,
+      onChange: e => { if (!isTeam) side.setS(parseInt(e.target.value) || 0); },
+      className: `w-full text-center text-2xl sm:text-3xl font-black py-2 sm:py-3 border-2 border-slate-100 rounded-xl focus:border-${side.col}-500 outline-none ${isTeam ? 'bg-slate-50 text-slate-800' : ''}`
     }), React.createElement("span", {
       className: "text-[11px] sm:text-[12px] font-black text-slate-400 mt-1 uppercase"
-    }, isTeam ? 'Rounds Won' : 'Score')));
+    }, isTeam ? '슬롯 승수' : 'Score')));
   })), React.createElement("div", {
     className: "flex flex-col gap-2 sm:gap-3"
   }, React.createElement("button", {
@@ -1894,9 +1912,10 @@ const MatchResultModal = ({
       const ns = sub.map(r => r.map(c => ({ ...c })));
       ns[boardSlot.ri][boardSlot.mi] = { s1: a, s2: b };
       setSub(ns);
-      let w1 = 0, w2 = 0;
-      ns.forEach(r => { let m1 = 0, m2 = 0; r.forEach(mm => { if (mm.s1 > mm.s2) m1++;else if (mm.s2 > mm.s1) m2++; }); if (m1 > m2) w1++;else if (m2 > m1) w2++; });
-      setS1(w1); setS2(w2); setBoardSlot(null);
+      const wn = slotsWon(ns);
+      setS1(wn[0]); setS2(wn[1]);
+      onSlotSave && onSlotSave(match.id, [{ slot: boardSlot.ri * nm + boardSlot.mi, s1: a, s2: b }]);
+      setBoardSlot(null);
     }
   })));
 };
@@ -5969,6 +5988,7 @@ const App = () => {
         cur.score2 = undefined;
         cur.winnerId = undefined;
         cur.status = 'pending';
+        cur.subScores = undefined;
         clearNext(updated, cur);
       } else {
         var _cur$participant;
@@ -5984,6 +6004,56 @@ const App = () => {
       return updated;
     });
     setSelectedMatch(null);
+  };
+  // 단체전 슬롯 결과: Firebase에서 최신본 읽어 자기 슬롯만 병합(동시 저장 안전) → 슬롯 승수 집계 → 승자 진출
+  const handleSaveSlots = async (matchId, updates) => {
+    if (!currentId) { alert('저장 실패: 대회 ID를 찾을 수 없습니다.'); return; }
+    try {
+      const snap = await db.ref('tournaments/' + currentId).once('value');
+      const data = snap.val();
+      if (!data || !Array.isArray(data.generatedMatches)) { alert('저장 실패: 대진 데이터를 찾을 수 없습니다.'); return; }
+      const tf = TEAM_FORMATS.find(f => { var _c; return f.id === ((_c = data.config) === null || _c === void 0 ? void 0 : _c.teamFormat); });
+      const nm = (tf && tf.matches) || 3;
+      const nr = (data.config && data.config.teamRounds) || 1;
+      const total = nm * nr;
+      const needWins = Math.floor(total / 2) + 1;
+      const matches = data.generatedMatches.map(m => ({ ...m }));
+      const idx = matches.findIndex(m => m.id === matchId);
+      if (idx === -1) { alert('저장 실패: 해당 경기를 찾을 수 없습니다.'); return; }
+      const cur = matches[idx];
+      const wasCompleted = cur.status === 'completed';
+      const subScores = Array.from({ length: total }, (_, i) => {
+        const e = Array.isArray(cur.subScores) ? cur.subScores[i] : null;
+        return e ? { s1: e.s1 || 0, s2: e.s2 || 0 } : { s1: 0, s2: 0 };
+      });
+      (updates || []).forEach(u => { if (u && u.slot >= 0 && u.slot < total) subScores[u.slot] = { s1: u.s1 || 0, s2: u.s2 || 0 }; });
+      let w1 = 0, w2 = 0, played = 0;
+      subScores.forEach(s => { if (s.s1 > 0 || s.s2 > 0) played++; if (s.s1 > s.s2) w1++;else if (s.s2 > s.s1) w2++; });
+      cur.subScores = subScores;
+      cur.score1 = w1;
+      cur.score2 = w2;
+      const pf = config.tournamentType === TType.GROUP_KNOCKOUT ? 'k' : 'r';
+      const decided = (w1 >= needWins || w2 >= needWins || played >= total) && w1 !== w2;
+      if (decided) {
+        const winner = w1 > w2 ? cur.participant1 : cur.participant2;
+        cur.winnerId = winner && winner.id;
+        cur.status = 'completed';
+        matches[idx] = cur;
+        if (winner) advanceWinnerInBracket(matches, cur, winner, pf);
+        autoAdvanceByes(matches, pf);
+      } else {
+        cur.winnerId = undefined;
+        cur.status = played > 0 ? 'in_progress' : 'pending';
+        matches[idx] = cur;
+        if (wasCompleted) clearNext(matches, cur);
+      }
+      data.generatedMatches = matches;
+      await db.ref('tournaments/' + currentId).set(data);
+      // 로컬 상태는 활성 리스너가 갱신 (autosave 재기록 방지)
+    } catch (e) {
+      console.error(e);
+      alert('슬롯 저장 실패. 네트워크 확인 후 다시 시도해주세요.');
+    }
   };
   const syncKnockout = (groups, mts) => {
     const target = mts || [...generatedMatches];
@@ -7124,7 +7194,8 @@ const App = () => {
     match: selectedMatch,
     config: config,
     onClose: () => setSelectedMatch(null),
-    onSave: handleUpdateMatch
+    onSave: handleUpdateMatch,
+    onSlotSave: handleSaveSlots
   }), selectedLeagueMatch && React.createElement(LeagueMatchModal, {
     match: selectedLeagueMatch.match,
     config: config,
