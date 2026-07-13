@@ -1266,7 +1266,7 @@ const TeamMatchCard = ({
     }, React.createElement("span", {
       className: "text-[11px] font-black text-blue-600 truncate max-w-[80px]"
     }, m.home.name), React.createElement("input", {
-      type: "number",
+      type: "number", onFocus: e => e.target.select(),
       min: "0",
       value: ((_draftScores$si = draftScores[si]) === null || _draftScores$si === void 0 ? void 0 : _draftScores$si.h) !== undefined ? draftScores[si].h : (_lineup$0$si$slotScor = lineup === null || lineup === void 0 || (_lineup$6 = lineup[0]) === null || _lineup$6 === void 0 || (_lineup$6 = _lineup$6[si]) === null || _lineup$6 === void 0 ? void 0 : _lineup$6.slotScoreHome) !== null && _lineup$0$si$slotScor !== void 0 ? _lineup$0$si$slotScor : '',
       onChange: e => setDraftScores(p => ({
@@ -1280,7 +1280,7 @@ const TeamMatchCard = ({
     }), React.createElement("span", {
       className: "font-black text-slate-400"
     }, ":"), React.createElement("input", {
-      type: "number",
+      type: "number", onFocus: e => e.target.select(),
       min: "0",
       value: ((_draftScores$si2 = draftScores[si]) === null || _draftScores$si2 === void 0 ? void 0 : _draftScores$si2.a) !== undefined ? draftScores[si].a : (_lineup$0$si$slotScor2 = lineup === null || lineup === void 0 || (_lineup$7 = lineup[0]) === null || _lineup$7 === void 0 || (_lineup$7 = _lineup$7[si]) === null || _lineup$7 === void 0 ? void 0 : _lineup$7.slotScoreAway) !== null && _lineup$0$si$slotScor2 !== void 0 ? _lineup$0$si$slotScor2 : '',
       onChange: e => setDraftScores(p => ({
@@ -1833,7 +1833,7 @@ const MatchResultModal = ({
     }, React.createElement("span", {
       className: "text-xs sm:text-sm font-bold text-slate-600 truncate flex-1 min-w-0"
     }, (_match$participant1 = match.participant1) === null || _match$participant1 === void 0 ? void 0 : _match$participant1.name), React.createElement("input", {
-      type: "number",
+      type: "number", onFocus: e => e.target.select(),
       value: m.s1,
       onChange: e => {
         const ns = [...sub];
@@ -1844,7 +1844,7 @@ const MatchResultModal = ({
     }), React.createElement("span", {
       className: "text-[10px] sm:text-[12px] font-black text-slate-300 italic shrink-0"
     }, "VS"), React.createElement("input", {
-      type: "number",
+      type: "number", onFocus: e => e.target.select(),
       value: m.s2,
       onChange: e => {
         const ns = [...sub];
@@ -1883,7 +1883,7 @@ const MatchResultModal = ({
     }, ((_side$p2 = side.p) === null || _side$p2 === void 0 ? void 0 : _side$p2.name) || 'TBD'), React.createElement("div", {
       className: "flex flex-col items-center"
     }, React.createElement("input", {
-      type: "number",
+      type: "number", onFocus: e => e.target.select(),
       value: side.s,
       readOnly: isTeam,
       onChange: e => { if (!isTeam) side.setS(parseInt(e.target.value) || 0); },
@@ -2242,7 +2242,7 @@ const LeagueMatchModal = ({
     }, displayName(homeSelected, homeMembers) || React.createElement("span", {
       className: "text-slate-300"
     }, "선수 미입력"))), React.createElement("input", {
-      type: "number",
+      type: "number", onFocus: e => e.target.select(),
       inputMode: "numeric",
       value: m.s1,
       onFocus: e => e.target.select(),
@@ -2255,7 +2255,7 @@ const LeagueMatchModal = ({
     }), React.createElement("span", {
       className: "text-[10px] sm:text-[12px] font-black text-slate-300 italic shrink-0"
     }, "VS"), React.createElement("input", {
-      type: "number",
+      type: "number", onFocus: e => e.target.select(),
       inputMode: "numeric",
       value: m.s2,
       onFocus: e => e.target.select(),
@@ -2296,7 +2296,7 @@ const LeagueMatchModal = ({
     }, React.createElement("span", {
       className: "text-[10px] sm:text-[12px] font-black text-slate-400 uppercase text-center leading-tight"
     }, "SET", React.createElement("br", null), idx + 1), React.createElement("input", {
-      type: "number",
+      type: "number", onFocus: e => e.target.select(),
       inputMode: "numeric",
       value: row.h,
       onFocus: e => e.target.select(),
@@ -2306,7 +2306,7 @@ const LeagueMatchModal = ({
     }), React.createElement("span", {
       className: "text-slate-300 font-black text-center text-sm sm:text-base"
     }, ":"), React.createElement("input", {
-      type: "number",
+      type: "number", onFocus: e => e.target.select(),
       inputMode: "numeric",
       value: row.a,
       onFocus: e => e.target.select(),
@@ -2346,7 +2346,7 @@ const LeagueMatchModal = ({
   }, React.createElement("div", {
     className: "text-xs sm:text-sm font-black text-slate-500 truncate uppercase"
   }, side.p.name), React.createElement("input", {
-    type: "number",
+    type: "number", onFocus: e => e.target.select(),
     inputMode: "numeric",
     value: side.s,
     onFocus: e => e.target.select(),
@@ -2361,7 +2361,7 @@ const LeagueMatchModal = ({
   }, React.createElement("div", {
     className: "text-xs sm:text-sm font-black text-slate-500 truncate uppercase"
   }, side.p.name), React.createElement("input", {
-    type: "number",
+    type: "number", onFocus: e => e.target.select(),
     inputMode: "numeric",
     value: side.s,
     onFocus: e => e.target.select(),
@@ -4933,7 +4933,7 @@ function KdkView({
     }, "인당 고정 게임수")), options.mode === 'fixed' && React.createElement("label", {
       className: "flex items-center gap-1.5 text-sm font-bold text-slate-600"
     }, "인당", React.createElement("input", {
-      type: "number",
+      type: "number", onFocus: e => e.target.select(),
       min: "1",
       max: "20",
       value: options.gamesPerPlayer || 5,
