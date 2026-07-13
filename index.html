@@ -1777,12 +1777,12 @@ const MatchResultModal = ({
     sub.forEach((r, ri) => r.forEach((m, mi) => { if (m.s1 > 0 || m.s2 > 0) out.push({ slot: ri * nm + mi, s1: m.s1, s2: m.s2 }); }));
     return out;
   };
-  const handleSave = () => {
+  const handleSave = async () => {
     if (isTeam) {
       const touched = collectTouched();
       if (!touched.length) { alert('입력된 슬롯 결과가 없습니다.'); return; }
-      onSlotSave && onSlotSave(match.id, touched);
-      onClose();
+      const r = onSlotSave && (await onSlotSave(match.id, touched));
+      if (r && r.ok) onClose();
       return;
     }
     var _match$participant9, _match$participant0;
@@ -1858,7 +1858,20 @@ const MatchResultModal = ({
       onClick: () => setBoardSlot({ ri: ri, mi: mi }),
       className: "w-9 shrink-0 bg-slate-800 text-white rounded-lg text-base leading-none hover:bg-slate-900 active:scale-95",
       title: "슬롯 스코어보드"
-    }, "📺"))
+    }, "📺"), React.createElement("button", {
+      onClick: async () => {
+        const cell = sub[ri][mi];
+        if (!(cell.s1 > 0 || cell.s2 > 0)) { alert('점수를 입력하세요.'); return; }
+        const r = onSlotSave && (await onSlotSave(match.id, [{ slot: ri * nm + mi, s1: cell.s1, s2: cell.s2 }]));
+        if (r && r.ok) {
+          let msg = getMatchSlotLabel(config.teamFormat, mi) + ' 저장 완료 (' + cell.s1 + ' : ' + cell.s2 + ')\n현재 슬롯 승수 ' + r.score1 + ' : ' + r.score2;
+          if (r.decided && r.winner) msg += '\n🏆 ' + r.winner.name + ' 승리 · 다음 라운드 진출';
+          alert(msg);
+        }
+      },
+      className: "shrink-0 bg-emerald-600 text-white rounded-lg text-xs font-black px-2 py-2 hover:bg-emerald-700 active:scale-95",
+      title: "이 슬롯 저장"
+    }, "저장"))
   })))), React.createElement("div", {
     className: "grid grid-cols-2 gap-3 sm:gap-8 items-center"
   }, [{
@@ -6007,11 +6020,11 @@ const App = () => {
   };
   // 단체전 슬롯 결과: Firebase에서 최신본 읽어 자기 슬롯만 병합(동시 저장 안전) → 슬롯 승수 집계 → 승자 진출
   const handleSaveSlots = async (matchId, updates) => {
-    if (!currentId) { alert('저장 실패: 대회 ID를 찾을 수 없습니다.'); return; }
+    if (!currentId) { alert('저장 실패: 대회 ID를 찾을 수 없습니다.'); return { ok: false }; }
     try {
       const snap = await db.ref('tournaments/' + currentId).once('value');
       const data = snap.val();
-      if (!data || !Array.isArray(data.generatedMatches)) { alert('저장 실패: 대진 데이터를 찾을 수 없습니다.'); return; }
+      if (!data || !Array.isArray(data.generatedMatches)) { alert('저장 실패: 대진 데이터를 찾을 수 없습니다.'); return { ok: false }; }
       const tf = TEAM_FORMATS.find(f => { var _c; return f.id === ((_c = data.config) === null || _c === void 0 ? void 0 : _c.teamFormat); });
       const nm = (tf && tf.matches) || 3;
       const nr = (data.config && data.config.teamRounds) || 1;
@@ -6019,7 +6032,7 @@ const App = () => {
       const needWins = Math.floor(total / 2) + 1;
       const matches = data.generatedMatches.map(m => ({ ...m }));
       const idx = matches.findIndex(m => m.id === matchId);
-      if (idx === -1) { alert('저장 실패: 해당 경기를 찾을 수 없습니다.'); return; }
+      if (idx === -1) { alert('저장 실패: 해당 경기를 찾을 수 없습니다.'); return { ok: false }; }
       const cur = matches[idx];
       const wasCompleted = cur.status === 'completed';
       const subScores = Array.from({ length: total }, (_, i) => {
@@ -6036,23 +6049,26 @@ const App = () => {
       const decided = (w1 >= needWins || w2 >= needWins || played >= total) && w1 !== w2;
       if (decided) {
         const winner = w1 > w2 ? cur.participant1 : cur.participant2;
-        cur.winnerId = winner && winner.id;
+        cur.winnerId = (winner && winner.id) || '';
         cur.status = 'completed';
         matches[idx] = cur;
         if (winner) advanceWinnerInBracket(matches, cur, winner, pf);
         autoAdvanceByes(matches, pf);
       } else {
-        cur.winnerId = undefined;
+        delete cur.winnerId;
         cur.status = played > 0 ? 'in_progress' : 'pending';
         matches[idx] = cur;
         if (wasCompleted) clearNext(matches, cur);
       }
       data.generatedMatches = matches;
-      await db.ref('tournaments/' + currentId).set(data);
+      const clean = JSON.parse(JSON.stringify(data)); // undefined 값 제거(Firebase set 거부 방지)
+      await db.ref('tournaments/' + currentId).set(clean);
       // 로컬 상태는 활성 리스너가 갱신 (autosave 재기록 방지)
+      return { ok: true, score1: w1, score2: w2, decided, winner: decided ? (w1 > w2 ? cur.participant1 : cur.participant2) : null };
     } catch (e) {
       console.error(e);
       alert('슬롯 저장 실패. 네트워크 확인 후 다시 시도해주세요.');
+      return { ok: false };
     }
   };
   const syncKnockout = (groups, mts) => {
