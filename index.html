@@ -4730,7 +4730,11 @@ function GroupSchedule({
   }, r.targetGames ? '인당 ' + r.targetGames + '게임' : r.k >= 4 ? '인당 ' + (r.k - 1) + '게임' : '—'),
      r.mode === 'balanced' && r.seedBalance && React.createElement("span", {
        className: "bg-white/25 px-2 py-1 rounded-lg"
-     }, "\u2696\ufe0f 파트너 전력 " + (r.seedBalance.partnerStrengthSpread === 0 ? '완전 균등' : '편차 ' + r.seedBalance.partnerStrengthSpread)),
+     }, r.seedBalance.fullCover
+          ? "\u2696\ufe0f 전원 서로 1회씩 파트너"
+          : r.seedBalance.topSeedsTogether === 0
+            ? "\u2696\ufe0f 상위시드 한 팀 없음 \u00b7 최대 전력차 " + r.seedBalance.matchGapMax
+            : "\u2696\ufe0f 최대 전력차 " + r.seedBalance.matchGapMax),
      courtLabel && React.createElement("span", {
     className: "bg-white/25 px-2 py-1 rounded-lg"
   }, "🏟 ", courtLabel))), r.warnings.length > 0 && React.createElement("div", {
@@ -4979,11 +4983,11 @@ function KdkView({
     }), "게임"), React.createElement("span", {
       className: "text-[12px] text-slate-400 font-medium"
     }, options.mode === 'fixed' ? '시간 부족 시 — 각자 정해진 게임수만'
-       : options.mode === 'balanced' ? '대회용 — 출전수·파트너 전력까지 균등하게'
+       : options.mode === 'balanced' ? '대회용 — 출전수 균등 + 매 경기 팽팽하게'
        : '시간 충분 시 — 모든 학생이 서로 1회씩 파트너')),
       options.mode === 'balanced' && React.createElement("p", {
         className: "text-[12px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2"
-      }, "\u2696\ufe0f 시드 균형 모드 — 명단을 강한 순서(1번 시드부터)로 입력하세요. 출전수를 전원 똑같이 맞추고, 강한 파트너를 몰아 받는 사람이 없도록 파트너 전력까지 균등하게 편성합니다."),
+      }, "\u2696\ufe0f 시드 균형 모드 — 명단을 강한 순서(1번 시드부터)로 입력하세요. 1경기는 1시드+막내 vs 2시드+차하위로 시작하고, 1\u00b72시드가 한 팀이 되는 경기를 만들지 않아 일방적인 경기가 나오지 않게 편성합니다. 출전수\u00b7대기수는 전원 동일하게 맞춥니다."),
       React.createElement("div", {
       className: "border-t border-slate-100"
     }), React.createElement("div", {
