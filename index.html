@@ -4727,7 +4727,11 @@ function GroupSchedule({
     className: "bg-white/20 px-2 py-1 rounded-lg"
   }, r.rounds.length, "라운드"), React.createElement("span", {
     className: "bg-white/20 px-2 py-1 rounded-lg"
-  }, r.mode === 'fixed' ? '인당 ' + r.targetGames + '게임' : '인당 ' + (r.k - 1) + '게임'), courtLabel && React.createElement("span", {
+  }, r.targetGames ? '인당 ' + r.targetGames + '게임' : r.k >= 4 ? '인당 ' + (r.k - 1) + '게임' : '—'),
+     r.mode === 'balanced' && r.seedBalance && React.createElement("span", {
+       className: "bg-white/25 px-2 py-1 rounded-lg"
+     }, "\u2696\ufe0f 파트너 전력 " + (r.seedBalance.partnerStrengthSpread === 0 ? '완전 균등' : '편차 ' + r.seedBalance.partnerStrengthSpread)),
+     courtLabel && React.createElement("span", {
     className: "bg-white/25 px-2 py-1 rounded-lg"
   }, "🏟 ", courtLabel))), r.warnings.length > 0 && React.createElement("div", {
     className: "px-5 pt-3 space-y-1"
@@ -4950,13 +4954,18 @@ function KdkView({
       onClick: () => setOptions({
         mode: 'full'
       }),
-      className: `px-3 py-1.5 text-sm font-black transition-all ${options.mode !== 'fixed' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`
+      className: `px-3 py-1.5 text-sm font-black transition-all ${(options.mode !== 'fixed' && options.mode !== 'balanced') ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`
     }, "전체 (모든 파트너 1회)"), React.createElement("button", {
       onClick: () => setOptions({
         mode: 'fixed'
       }),
       className: `px-3 py-1.5 text-sm font-black transition-all ${options.mode === 'fixed' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`
-    }, "인당 고정 게임수")), options.mode === 'fixed' && React.createElement("label", {
+    }, "인당 고정 게임수"), React.createElement("button", {
+      onClick: () => setOptions({
+        mode: 'balanced'
+      }),
+      className: `px-3 py-1.5 text-sm font-black transition-all ${options.mode === 'balanced' ? 'bg-emerald-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`
+    }, "\u2696\ufe0f 시드 균형")), (options.mode === 'fixed' || options.mode === 'balanced') && React.createElement("label", {
       className: "flex items-center gap-1.5 text-sm font-bold text-slate-600"
     }, "인당", React.createElement("input", {
       type: "number", onFocus: e => e.target.select(),
@@ -4969,7 +4978,13 @@ function KdkView({
       className: "w-14 border-2 border-slate-200 rounded-lg px-2 py-1 text-sm font-black text-center"
     }), "게임"), React.createElement("span", {
       className: "text-[12px] text-slate-400 font-medium"
-    }, options.mode === 'fixed' ? '시간 부족 시 — 각자 정해진 게임수만' : '시간 충분 시 — 모든 학생이 서로 1회씩 파트너')), React.createElement("div", {
+    }, options.mode === 'fixed' ? '시간 부족 시 — 각자 정해진 게임수만'
+       : options.mode === 'balanced' ? '대회용 — 출전수·파트너 전력까지 균등하게'
+       : '시간 충분 시 — 모든 학생이 서로 1회씩 파트너')),
+      options.mode === 'balanced' && React.createElement("p", {
+        className: "text-[12px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2"
+      }, "\u2696\ufe0f 시드 균형 모드 — 명단을 강한 순서(1번 시드부터)로 입력하세요. 출전수를 전원 똑같이 맞추고, 강한 파트너를 몰아 받는 사람이 없도록 파트너 전력까지 균등하게 편성합니다."),
+      React.createElement("div", {
       className: "border-t border-slate-100"
     }), React.createElement("div", {
       className: "flex flex-wrap items-center gap-3"

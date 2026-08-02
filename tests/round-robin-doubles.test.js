@@ -159,6 +159,79 @@ verifyFixed(8, 7);   // = 전체 풀리그와 동일 게임수
   check(res.k === 4, '[trim] 공백 항목 제거 후 4명 인식 (실제 ' + res.k + ')');
 })();
 
+// ── 시드 균형 모드(대회용) 검증 ────────────────────────────────
+//  명단 순서 = 시드 순. 1번 시드가 가장 강하다고 보고 전력 점수 k-1 … 0 을 부여.
+function verifyBalanced(k) {
+  const names = Array.from({ length: k }, (_, i) => 'P' + (i + 1));
+  const res = RRD.generateGroupSchedule(names, { mode: 'balanced', seed: 2025 });
+  const tag = `[balanced k=${k}]`;
+  const idx = n => names.indexOf(n);
+  const S = i => k - 1 - i;
+
+  if (!res.targetGames) { check(false, tag + ' 편성 실패'); return; }
+
+  // 1) 전원 출전수가 정확히 같다 — 시드 균형 모드의 핵심 보장
+  const games = res.perPlayer.map(p => p.games);
+  check(Math.min(...games) === Math.max(...games),
+    tag + ' 출전수 전원 동일 (실제 ' + Math.min(...games) + '~' + Math.max(...games) + ')');
+  check(games[0] === res.targetGames,
+    tag + ' 출전수가 목표치와 일치 (' + games[0] + ' vs ' + res.targetGames + ')');
+
+  // 2) N × 게임수 는 4의 배수여야 전원 동일 출전이 성립한다
+  check((k * res.targetGames) % 4 === 0, tag + ' N×게임수가 4의 배수');
+
+  // 3) 대기 횟수도 자동으로 같아진다
+  const byes = res.perPlayer.map(p => p.byes);
+  check(Math.min(...byes) === Math.max(...byes), tag + ' 대기 횟수 전원 동일');
+
+  // 4) 파트너 전력 합 — 라운드마다 팀을 직접 집계해 seedBalance 와 대조
+  const pStr = new Array(k).fill(0);
+  res.rounds.forEach(r => {
+    [r.teamA, r.teamB].forEach(t => {
+      const x = idx(t[0]), y = idx(t[1]);
+      pStr[x] += S(y); pStr[y] += S(x);
+    });
+  });
+  check(res.seedBalance != null, tag + ' seedBalance 통계 제공');
+  if (res.seedBalance) {
+    check(JSON.stringify(res.seedBalance.partnerStrength) === JSON.stringify(pStr),
+      tag + ' 보고된 파트너 전력이 실제 대진과 일치');
+    check(res.seedBalance.partnerStrengthSpread === Math.max(...pStr) - Math.min(...pStr),
+      tag + ' 파트너 전력 편차 값이 정확');
+  }
+
+  // 5) 파트너 조합이 남아돌 때는 중복이 없어야 한다
+  if (res.targetGames < k - 1) {
+    check(res.coverage.repeatedPartners === 0,
+      tag + ' 파트너 중복 없음 (실제 ' + res.coverage.repeatedPartners + ')');
+  }
+}
+[4, 5, 6, 7, 8, 9, 10, 12].forEach(verifyBalanced);
+
+// 6명은 파트너 전력을 완전히 균등하게 맞출 수 있어야 한다 (대회 실사용 케이스)
+(() => {
+  const names = ['A', 'B', 'C', 'D', 'E', 'F'];
+  const res = RRD.generateGroupSchedule(names, { mode: 'balanced', seed: 2025 });
+  check(res.targetGames === 4, '[balanced 6명] 인당 4게임으로 조정 (실제 ' + res.targetGames + ')');
+  check(res.rounds.length === 6, '[balanced 6명] 총 6경기 (실제 ' + res.rounds.length + ')');
+  check(res.seedBalance && res.seedBalance.partnerStrengthSpread === 0,
+    '[balanced 6명] 파트너 전력 완전 균등 (실제 편차 ' +
+      (res.seedBalance ? res.seedBalance.partnerStrengthSpread : '?') + ')');
+  check(res.seedBalance && res.seedBalance.opponentMeetSpread <= 1,
+    '[balanced 6명] 상대 만남 편차 1회 이내');
+})();
+
+// 전원 동일 출전이 불가능한 게임수는 자동으로 내려간다
+(() => {
+  check(RRD.feasibleTarget(6, 5) === 4, '[feasibleTarget] 6명·5게임 → 4게임');
+  check(RRD.feasibleTarget(6, 3) === 2, '[feasibleTarget] 6명·3게임 → 2게임');
+  check(RRD.feasibleTarget(8, 5) === 5, '[feasibleTarget] 8명·5게임 → 그대로');
+  check(RRD.feasibleTarget(7, 6) === 4, '[feasibleTarget] 7명·6게임 → 4게임');
+  const res = RRD.generateGroupSchedule(['A','B','C','D','E','F'], { mode: 'balanced', gamesPerPlayer: 5, seed: 7 });
+  check(res.targetGames === 4, '[balanced] 불가능한 게임수 요청 시 자동 조정');
+  check(res.warnings.some(w => w.indexOf('조정') >= 0), '[balanced] 조정 사실을 경고로 알림');
+})();
+
 // 8명 그룹 실제 출력 샘플 표시
 (() => {
   console.log('\n── 샘플: 8명 그룹 (1코트, 라운드당 4명 경기 / 4명 대기) ──');

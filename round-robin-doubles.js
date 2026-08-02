@@ -274,12 +274,208 @@
     return { games, target };
   }
 
+  // ── 4) 시드 균형 모드 ────────────────────────────────────────
+  //  대회용. 명단 순서를 시드 순(1번이 최강)으로 보고, 아무도 유리하지 않은 대진을 만든다.
+  //  동시에 맞추는 4가지:
+  //    ① 출전수 완전 동일   ② 파트너 중복 0
+  //    ③ 파트너 전력 합 균등 (강한 파트너를 몰아 받는 사람이 없게)
+  //    ④ 상대 만남 횟수 균등
+  //  N명 전원이 같은 게임수를 뛰려면 (N × 게임수)가 4로 나누어떨어져야 한다.
+  //    N≡0(mod4) → 아무 게임수나 / N≡2(mod4) → 짝수만 / N 홀수 → 4의 배수만
+
+  // 요청한 게임수 이하에서 "전원 동일 출전"이 가능한 가장 큰 값
+  function feasibleTarget(k, want) {
+    const cap = Math.min(Math.max(1, want || (k - 1)), k - 1);
+    for (let t = cap; t >= 1; t--) if ((k * t) % 4 === 0) return t;
+    return 0;
+  }
+
+  function seedStrength(k, i) { return k - 1 - i; }   // 1번 시드가 가장 큼
+
+  // 4명을 2팀으로 가르는 3가지 + 후보 게임 전체 (C(k,4) × 3)
+  function candidateGames(k) {
+    const out = [];
+    const idx = Array.from({ length: k }, (_, i) => i);
+    for (const f of kCombinations(idx, 4)) {
+      out.push({ A: [f[0], f[1]], B: [f[2], f[3]] });
+      out.push({ A: [f[0], f[2]], B: [f[1], f[3]] });
+      out.push({ A: [f[0], f[3]], B: [f[1], f[2]] });
+    }
+    return out;
+  }
+
+  function scoreSchedule(games, k, target) {
+    const plays = new Array(k).fill(0);
+    const pStr = new Array(k).fill(0);        // 파트너 전력 합
+    const oStr = new Array(k).fill(0);        // 상대 전력 합
+    const pairUse = {};
+    const oppCount = Array.from({ length: k }, () => new Array(k).fill(0));
+    for (const g of games) {
+      for (const t of [g.A, g.B]) {
+        const key = pairKey(t[0], t[1]);
+        pairUse[key] = (pairUse[key] || 0) + 1;
+        pStr[t[0]] += seedStrength(k, t[1]);
+        pStr[t[1]] += seedStrength(k, t[0]);
+      }
+      for (const p of g.A) for (const q of g.B) {
+        oStr[p] += seedStrength(k, q); oStr[q] += seedStrength(k, p);
+        oppCount[p][q]++; oppCount[q][p]++;
+      }
+      [g.A[0], g.A[1], g.B[0], g.B[1]].forEach(p => plays[p]++);
+    }
+    let repeats = 0;
+    for (const c of Object.values(pairUse)) if (c > 1) repeats += c - 1;
+
+    let playErr = 0;
+    for (let i = 0; i < k; i++) playErr += Math.abs(plays[i] - target);
+
+    const spread = a => Math.max.apply(null, a) - Math.min.apply(null, a);
+    const oq = [];
+    for (let i = 0; i < k; i++) for (let j = i + 1; j < k; j++) oq.push(oppCount[i][j]);
+    const oppMean = oq.reduce((s, v) => s + v, 0) / oq.length;
+    let oppVar = 0;
+    for (const v of oq) oppVar += (v - oppMean) * (v - oppMean);
+
+    const cost = playErr * 100000
+      + repeats * 4000
+      + spread(oq) * 900
+      + oppVar * 60
+      + spread(pStr) * 400
+      + spread(oStr) * 25;
+    return { cost, plays, pStr, oStr, oppCount, repeats, playErr, oppSpread: spread(oq),
+             pStrSpread: spread(pStr), oStrSpread: spread(oStr) };
+  }
+
+  //  후보 게임 풀 위에서 무작위 재시작 + 언덕오르기.
+  //  수(move): ⓐ 게임 통째 교체  ⓑ 같은 4명을 다른 팀조합으로  ⓒ 선수 1명 교체
+  function buildBalancedGames(k, want, seed) {
+    const target = feasibleTarget(k, want);
+    if (!target) return { games: [], target: 0, stats: null };
+
+    //  인당 (k-1)게임 = 모든 파트너 1회. 이건 정확해가 있으므로 탐색하지 않고
+    //  기존 백트래킹을 그대로 쓴다 (전원이 서로 1회씩 파트너 = 구조적으로 가장 공정).
+    if (target === k - 1 && (k % 4 === 0 || k % 4 === 1)) {
+      const exact = buildGames(k, seed).games;
+      const asAB = exact.map(g => ({ A: g.a, B: g.b }));
+      return { games: exact, target, stats: scoreSchedule(asAB, k, target), fullCover: true };
+    }
+
+    const G = (k * target) / 4;
+    const pool = candidateGames(k);
+    const rand = mulberry32((seed || 2025) ^ 0x2545f491);
+    const pick = () => pool[Math.floor(rand() * pool.length)];
+
+    let best = null, bestScore = null;
+    const RESTARTS = 24, ITERS = 4000;
+
+    for (let r = 0; r < RESTARTS; r++) {
+      let cur = Array.from({ length: G }, pick);
+      let sc = scoreSchedule(cur, k, target);
+      for (let it = 0; it < ITERS; it++) {
+        const gi = Math.floor(rand() * G);
+        const old = cur[gi];
+        const roll = rand();
+        let next;
+        if (roll < 0.45) {
+          next = pick();
+        } else if (roll < 0.75) {
+          const f = [old.A[0], old.A[1], old.B[0], old.B[1]];
+          const alt = [
+            { A: [f[0], f[2]], B: [f[1], f[3]] },
+            { A: [f[0], f[3]], B: [f[1], f[2]] },
+            { A: [f[0], f[1]], B: [f[2], f[3]] },
+          ];
+          next = alt[Math.floor(rand() * 3)];
+        } else {
+          const f = [old.A[0], old.A[1], old.B[0], old.B[1]];
+          const outside = [];
+          for (let p = 0; p < k; p++) if (f.indexOf(p) === -1) outside.push(p);
+          if (!outside.length) continue;
+          const slot = Math.floor(rand() * 4);
+          const g2 = f.slice();
+          g2[slot] = outside[Math.floor(rand() * outside.length)];
+          next = { A: [g2[0], g2[1]], B: [g2[2], g2[3]] };
+        }
+        cur[gi] = next;
+        const ns = scoreSchedule(cur, k, target);
+        if (ns.cost <= sc.cost) sc = ns; else cur[gi] = old;
+        if (sc.cost === 0) break;
+      }
+      if (!bestScore || sc.cost < bestScore.cost) { bestScore = sc; best = cur.slice(); }
+      if (bestScore.cost === 0) break;
+    }
+
+    // 마무리: 게임을 하나씩 후보 전체로 바꿔 보며 더 나아지지 않을 때까지 내려간다
+    const budget = Math.max(1, Math.floor(60000 / Math.max(1, G)));
+    for (let pass = 0; pass < 30; pass++) {
+      let improved = false;
+      for (let gi = 0; gi < G; gi++) {
+        const keep = best[gi];
+        let bestCand = keep, bestC = bestScore;
+        const step = Math.max(1, Math.ceil(pool.length / budget));
+        for (let ci = 0; ci < pool.length; ci += step) {
+          const cand = pool[ci];
+          if (cand === keep) continue;
+          best[gi] = cand;
+          const s2 = scoreSchedule(best, k, target);
+          if (s2.cost < bestC.cost) { bestC = s2; bestCand = cand; }
+        }
+        best[gi] = bestCand;
+        if (bestC.cost < bestScore.cost) { bestScore = bestC; improved = true; }
+      }
+      if (!improved || bestScore.cost === 0) break;
+    }
+
+    return {
+      games: best.map(g => ({ a: g.A, b: g.B })),
+      target,
+      stats: bestScore,
+    };
+  }
+
+  //  대기(바이)가 몰리지 않도록 라운드 순서를 다듬는다.
+  //  연속 대기를 최우선으로 없애고, 그다음 대기 간격을 고르게.
+  function polishOrder(ordered, k) {
+    const n = ordered.length;
+    if (n < 3) return ordered;
+    function cost(list) {
+      const restAt = Array.from({ length: k }, () => []);
+      list.forEach((r, i) => r.waiting.forEach(p => restAt[p].push(i)));
+      let c = 0;
+      for (const rl of restAt) {
+        for (let i = 1; i < rl.length; i++) {
+          const gap = rl[i] - rl[i - 1];
+          if (gap === 1) c += 100;
+          c += Math.abs(gap - (n / Math.max(1, rl.length)));
+        }
+      }
+      return c;
+    }
+    let cur = ordered.slice(), best = cost(cur);
+    for (let pass = 0; pass < 400; pass++) {
+      let improved = false;
+      for (let i = 0; i < n && !improved; i++) {
+        for (let j = i + 1; j < n; j++) {
+          const t = cur.slice();
+          const tmp = t[i]; t[i] = t[j]; t[j] = tmp;
+          const c = cost(t);
+          if (c < best) { best = c; cur = t; improved = true; break; }
+        }
+      }
+      if (!improved) break;
+    }
+    return cur;
+  }
+
   // ── 공개 API ─────────────────────────────────────────────────
-  //  names: 학생 이름 배열.
+  //  names: 학생 이름 배열. (mode='balanced' 일 때는 시드 순서 = 강한 순서)
   //  options: {
   //    seed,                               결정적 시드
-  //    mode: 'full' | 'fixed',             'full'=모든 파트너 1회, 'fixed'=인당 고정 게임수
-  //    gamesPerPlayer,                     mode='fixed'일 때 인당 목표 게임수
+  //    mode: 'full' | 'fixed' | 'balanced',
+  //                                        'full'=모든 파트너 1회
+  //                                        'fixed'=인당 고정 게임수
+  //                                        'balanced'=시드 균형(대회용)
+  //    gamesPerPlayer,                     'fixed'/'balanced'일 때 인당 목표 게임수
   //  }
   //  반환: {
   //    rounds: [{ round, teamA:[n,n], teamB:[n,n], waiting:[n...] }],
@@ -296,25 +492,44 @@
 
     if (k < 4) {
       return {
-        rounds: [], coverage: { totalPairs: k * (k - 1) / 2, coveredPairs: 0, missingPairs: [], fullyCovered: false },
+        rounds: [],
+        mode: options.mode || 'full',
+        targetGames: null,
+        seedBalance: null,
+        coverage: { totalPairs: k * (k - 1) / 2, coveredPairs: 0, missingPairs: [], fullyCovered: false, repeatedPartners: 0 },
         perPlayer: clean.map(n => ({ name: n, games: 0, byes: 0, partners: [], opponents: [] })),
         warnings: ['복식 경기를 만들려면 최소 4명이 필요합니다 (현재 ' + k + '명).'],
         k,
       };
     }
 
-    // mode: 'full'(모든 파트너 1회) | 'fixed'(인당 고정 게임수)
-    const mode = options.mode === 'fixed' ? 'fixed' : 'full';
+    // mode: 'full'(모든 파트너 1회) | 'fixed'(인당 고정 게임수) | 'balanced'(시드 균형)
+    const mode = (options.mode === 'fixed' || options.mode === 'balanced') ? options.mode : 'full';
     const totalPairs = k * (k - 1) / 2;
-    let games, targetGames = null;
+    let games, targetGames = null, balance = null;
     if (mode === 'fixed') {
       const t = Math.max(1, Math.min(options.gamesPerPlayer || 5, k - 1));
       targetGames = t;
       games = buildFixedGames(k, t, options.seed).games;
+    } else if (mode === 'balanced') {
+      const want = Math.max(1, Math.min(options.gamesPerPlayer || (k - 1), k - 1));
+      const r = buildBalancedGames(k, want, options.seed);
+      targetGames = r.target;
+      games = r.games;
+      balance = r.stats;
+      if (!targetGames) {
+        warnings.push(k + '명으로는 전원이 같은 게임수를 뛰는 편성을 만들 수 없습니다.');
+      } else if (targetGames < want) {
+        warnings.push(
+          '인당 ' + want + '게임은 ' + k + '명 구성에서 출전수를 똑같이 맞출 수 없어 ' +
+          targetGames + '게임으로 조정했습니다 (N×게임수가 4의 배수여야 전원 동일 출전).'
+        );
+      }
     } else {
       games = buildGames(k, options.seed).games;
     }
     let ordered = orderRounds(games, k);
+    if (mode === 'balanced') ordered = polishOrder(ordered, k);
 
     // 커버리지/통계 계산
     const coveredSet = new Set();
@@ -344,7 +559,14 @@
     const fullyCovered = missingPairs.length === 0;
     const repeatedPartners = Object.values(partnerPairCount).filter(c => c > 1).length;
 
-    if (mode === 'fixed') {
+    if (mode === 'balanced' && balance) {
+      const minG = Math.min(...gamesOf), maxG = Math.max(...gamesOf);
+      if (minG !== maxG) warnings.push('출전수가 ' + minG + '~' + maxG + '게임으로 갈렸습니다.');
+      if (repeatedPartners > 0) warnings.push(repeatedPartners + '개 파트너 조합이 중복됩니다.');
+      if (!fullyCovered && balance.pStrSpread > 0) {
+        warnings.push('파트너 전력 합 편차가 ' + balance.pStrSpread + '점 남았습니다. 🎲 다른 조합으로 다시 뽑으면 줄어들 수 있습니다.');
+      }
+    } else if (mode === 'fixed') {
       const minG = Math.min(...gamesOf), maxG = Math.max(...gamesOf);
       if (minG < targetGames) {
         const shortCount = gamesOf.filter(g => g < targetGames).length;
@@ -385,13 +607,23 @@
       mode,
       targetGames,
       coverage: { totalPairs, coveredPairs: coveredSet.size, missingPairs, fullyCovered, repeatedPartners },
+      seedBalance: balance ? {
+        partnerStrength: balance.pStr.slice(),
+        opponentStrength: balance.oStr.slice(),
+        partnerStrengthSpread: balance.pStrSpread,
+        opponentStrengthSpread: balance.oStrSpread,
+        opponentMeetSpread: balance.oppSpread,
+        fullCover: fullyCovered,
+        perfect: fullyCovered || (balance.pStrSpread === 0 && repeatedPartners === 0),
+      } : null,
       perPlayer,
       warnings,
       k,
     };
   }
 
-  const api = { generateGroupSchedule, buildGames, buildFixedGames, orderRounds, pairKey, mulberry32 };
+  const api = { generateGroupSchedule, buildGames, buildFixedGames, buildBalancedGames,
+                orderRounds, polishOrder, feasibleTarget, pairKey, mulberry32 };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.RoundRobinDoubles = api;
