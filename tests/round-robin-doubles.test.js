@@ -205,20 +205,98 @@ function verifyBalanced(k) {
     check(res.coverage.repeatedPartners === 0,
       tag + ' 파트너 중복 없음 (실제 ' + res.coverage.repeatedPartners + ')');
   }
+
+  // 6) 경기별 팀 전력차 — 라운드에서 직접 계산해 보고값과 대조
+  let gapMax = 0, gapSum = 0, topTogether = 0;
+  res.rounds.forEach(r => {
+    const a = S(idx(r.teamA[0])) + S(idx(r.teamA[1]));
+    const b = S(idx(r.teamB[0])) + S(idx(r.teamB[1]));
+    const g = Math.abs(a - b);
+    gapSum += g;
+    if (g > gapMax) gapMax = g;
+    [r.teamA, r.teamB].forEach(t => {
+      const pair = [idx(t[0]), idx(t[1])].sort((x, y) => x - y);
+      if (pair[0] === 0 && pair[1] === 1) topTogether++;
+    });
+  });
+  if (res.seedBalance) {
+    check(res.seedBalance.matchGapMax === gapMax,
+      tag + ' 보고된 최대 팀 전력차가 실제 대진과 일치 (' + res.seedBalance.matchGapMax + ' vs ' + gapMax + ')');
+    check(res.seedBalance.matchGapSum === gapSum, tag + ' 보고된 전력차 합이 실제 대진과 일치');
+    check(res.seedBalance.topSeedsTogether === topTogether,
+      tag + ' 보고된 1·2시드 한 팀 횟수가 실제 대진과 일치');
+
+    // 7) 핵심 보장: 파트너 조합에 여유가 있으면 1·2시드는 절대 한 팀이 되지 않는다.
+    //    (모든 파트너 조합을 1회씩 쓰는 완전커버 편성에서는 수학적으로 불가피하므로 제외)
+    if (!res.seedBalance.fullCover) {
+      check(topTogether === 0, tag + ' 1·2시드가 한 팀이 되는 경기 없음 (실제 ' + topTogether + '경기)');
+    }
+  }
 }
 [4, 5, 6, 7, 8, 9, 10, 12].forEach(verifyBalanced);
 
-// 6명은 파트너 전력을 완전히 균등하게 맞출 수 있어야 한다 (대회 실사용 케이스)
+// 6명 = 대회 실사용 케이스(중남집배). 요구사항을 그대로 검증한다.
 (() => {
   const names = ['A', 'B', 'C', 'D', 'E', 'F'];
-  const res = RRD.generateGroupSchedule(names, { mode: 'balanced', seed: 2025 });
-  check(res.targetGames === 4, '[balanced 6명] 인당 4게임으로 조정 (실제 ' + res.targetGames + ')');
-  check(res.rounds.length === 6, '[balanced 6명] 총 6경기 (실제 ' + res.rounds.length + ')');
-  check(res.seedBalance && res.seedBalance.partnerStrengthSpread === 0,
-    '[balanced 6명] 파트너 전력 완전 균등 (실제 편차 ' +
-      (res.seedBalance ? res.seedBalance.partnerStrengthSpread : '?') + ')');
-  check(res.seedBalance && res.seedBalance.opponentMeetSpread <= 1,
-    '[balanced 6명] 상대 만남 편차 1회 이내');
+  const S = i => 5 - i;
+  const idx = n => names.indexOf(n);
+
+  //  시드를 바꿔 뽑아도(=🎲 다시 뽑기) 보장이 깨지면 안 된다
+  [2025, 1, 7, 99, 404].forEach(seed => {
+    const res = RRD.generateGroupSchedule(names, { mode: 'balanced', seed });
+    const tag = '[balanced 6명 seed=' + seed + ']';
+    check(res.targetGames === 4, tag + ' 인당 4게임 (실제 ' + res.targetGames + ')');
+    check(res.rounds.length === 6, tag + ' 총 6경기 (실제 ' + res.rounds.length + ')');
+    check(res.coverage.repeatedPartners === 0, tag + ' 파트너 중복 0');
+
+    const B = res.seedBalance;
+    check(B && B.topSeedsTogether === 0, tag + ' 1·2시드 한 팀 없음');
+    check(B && B.maxSameOpponent <= 3, tag + ' 같은 상대 최대 3번 (실제 ' + (B ? B.maxSameOpponent : '?') + ')');
+    check(B && B.classicOpener === true, tag + ' 1시드+막내 vs 2시드+차하위 경기 포함');
+
+    //  그 경기가 실제로 1경기여야 한다 (전통 KDK 오프닝)
+    const r0 = res.rounds[0];
+    const first = [[idx(r0.teamA[0]), idx(r0.teamA[1])].sort((a, b) => a - b).join(','),
+                   [idx(r0.teamB[0]), idx(r0.teamB[1])].sort((a, b) => a - b).join(',')].sort().join('|');
+    check(first === '0,5|1,4', tag + ' 1경기가 1·6 vs 2·5 (실제 ' + first + ')');
+
+    //  연속으로 두 번 쉬는 사람이 없어야 한다
+    let backToBackBye = false;
+    for (let i = 1; i < res.rounds.length; i++) {
+      const prev = new Set(res.rounds[i - 1].waiting);
+      if (res.rounds[i].waiting.some(n => prev.has(n))) backToBackBye = true;
+    }
+    check(!backToBackBye, tag + ' 연속 대기 없음');
+
+    //  1경기는 완전히 팽팽해야 한다 (1+6 = 2+5)
+    const gap0 = Math.abs(S(idx(r0.teamA[0])) + S(idx(r0.teamA[1]))
+                        - (S(idx(r0.teamB[0])) + S(idx(r0.teamB[1]))));
+    check(gap0 === 0, tag + ' 1경기 팀 전력차 0 (실제 ' + gap0 + ')');
+  });
+})();
+
+// 완전커버(모든 파트너 1회씩) 편성에서는 1·2시드가 정확히 한 번 한 팀이 된다 — 수학적 필연
+(() => {
+  [4, 5, 8, 9, 12].forEach(k => {
+    const names = Array.from({ length: k }, (_, i) => 'P' + (i + 1));
+    const res = RRD.generateGroupSchedule(names, { mode: 'balanced', seed: 2025 });
+    const B = res.seedBalance;
+    check(B && B.fullCover === true, '[balanced k=' + k + '] 완전커버 편성');
+    check(B && B.topSeedsTogether === 1,
+      '[balanced k=' + k + '] 완전커버에서는 1·2시드가 정확히 1회 한 팀 (실제 ' +
+        (B ? B.topSeedsTogether : '?') + ')');
+  });
+})();
+
+// 인원이 많아도 브라우저가 멈추지 않을 만큼 빨리 끝나야 한다
+(() => {
+  [12, 16, 20].forEach(k => {
+    const names = Array.from({ length: k }, (_, i) => 'P' + (i + 1));
+    const t0 = Date.now();
+    RRD.generateGroupSchedule(names, { mode: 'balanced', seed: 2025 });
+    const ms = Date.now() - t0;
+    check(ms < 15000, '[balanced k=' + k + '] 15초 안에 완료 (실제 ' + ms + 'ms)');
+  });
 })();
 
 // 전원 동일 출전이 불가능한 게임수는 자동으로 내려간다

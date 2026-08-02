@@ -971,7 +971,11 @@
               </span>
               {r.mode === 'balanced' && r.seedBalance && (
                 <span className="bg-white/25 px-2 py-1 rounded-lg">
-                  ⚖️ 파트너 전력 {r.seedBalance.partnerStrengthSpread === 0 ? '완전 균등' : '편차 ' + r.seedBalance.partnerStrengthSpread}
+                  {r.seedBalance.fullCover
+                    ? '⚖️ 전원 서로 1회씩 파트너'
+                    : r.seedBalance.topSeedsTogether === 0
+                      ? '⚖️ 상위시드 한 팀 없음 · 최대 전력차 ' + r.seedBalance.matchGapMax
+                      : '⚖️ 최대 전력차 ' + r.seedBalance.matchGapMax}
                 </span>
               )}
               {courtLabel && <span className="bg-white/25 px-2 py-1 rounded-lg">🏟 {courtLabel}</span>}
@@ -1197,14 +1201,15 @@
                   ? '시간이 충분할 때 — 모든 학생이 서로 1회씩 파트너'
                   : options.mode === 'fixed'
                   ? '시간이 부족할 때 — 각자 정해진 게임수만 (파트너 최대한 다양)'
-                  : '대회용 — 출전수·파트너 전력까지 균등하게'}
+                  : '대회용 — 출전수 균등 + 매 경기 팽팽하게'}
               </span>
             </div>
             {options.mode === 'balanced' && (
               <p className="text-[12px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
                 ⚖️ <b>시드 균형 모드</b> — 명단을 <b>강한 순서(1번 시드부터)</b>로 입력하세요.
-                출전수를 전원 똑같이 맞추고, <b>강한 파트너를 몰아 받는 사람이 없도록</b> 파트너 전력까지 균등하게 편성합니다.
-                전원 동일 출전이 되도록 인당 게임수를 자동 조정할 수 있습니다.
+                1경기는 <b>1시드+막내 vs 2시드+차하위</b>로 시작하고, <b>1·2시드가 한 팀이 되는 경기를 만들지 않아</b>
+                일방적인 경기가 나오지 않게 편성합니다. 출전수·대기수는 전원 동일하게 맞춥니다.
+                (전원 동일 출전이 되도록 인당 게임수를 자동 조정할 수 있습니다)
               </p>
             )}
 
