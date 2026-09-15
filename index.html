@@ -699,7 +699,8 @@ function generateLeagueSchedule(participants, groupPrefix = '', teamRounds = 1) 
   }
   return rounds;
 }
-function calculateStandings(participants, rounds, isSets = false) {
+// rankBy: 'pts'(기본, 승점 > 득실차 > 다득점) | 'avg'(평균득점 > 경기당 득실 > 승점 — 결석으로 경기 수가 다른 수행평가용)
+function calculateStandings(participants, rounds, isSets = false, rankBy = 'pts') {
   const stats = {};
   participants.forEach(p => {
     stats[p.id] = {
@@ -782,8 +783,29 @@ function calculateStandings(participants, rounds, isSets = false) {
       s.pfAvg = +(s.pf / s.played).toFixed(2);
     }
   });
+  if (rankBy === 'avg') {
+    const pdAvg = s => s.played > 0 ? s.pd / s.played : 0;
+    return Object.values(stats).sort((a, b) => b.pfAvg !== a.pfAvg ? b.pfAvg - a.pfAvg : pdAvg(b) !== pdAvg(a) ? pdAvg(b) - pdAvg(a) : b.pts !== a.pts ? b.pts - a.pts : b.pf - a.pf);
+  }
   return Object.values(stats).sort((a, b) => b.pts !== a.pts ? b.pts - a.pts : b.pd !== a.pd ? b.pd - a.pd : b.pf !== a.pf ? b.pf - a.pf : b.gd !== a.gd ? b.gd - a.gd : b.gf - a.gf);
 }
+const rankRuleText = rankBy => rankBy === 'avg' ? '평균득점 > 경기당 득실 > 승점' : '승점 > 득실차 > 다득점';
+// 진행 중인 대회에서도 대진·점수를 건드리지 않고 순위 기준만 바꾼다 (onChange 없으면 보기 전용)
+// 설정에서 순위 기준을 한 번도 고르지 않은 대회(rankBy 없음)에는 띄우지 않는다 — 기존 대회 화면은 그대로
+const RankByBar = ({
+  value,
+  onChange
+}) => !value ? null : React.createElement("div", {
+  className: "flex items-center gap-2 flex-wrap bg-white border border-slate-200 rounded-2xl px-4 py-3 shadow-sm"
+}, React.createElement("span", {
+  className: "text-sm font-black text-slate-500"
+}, "📊 순위 기준"), onChange ? [['pts', '승점 순'], ['avg', '평균 득점 순']].map(([v, label]) => React.createElement("button", {
+  key: v,
+  onClick: () => onChange(v),
+  className: `px-3 py-1.5 rounded-xl text-sm font-black border-2 transition-all ${(value || 'pts') === v ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-100 text-slate-400 hover:border-blue-200'}`
+}, label)) : null, React.createElement("span", {
+  className: "text-[12px] font-bold text-slate-400 ml-auto"
+}, rankRuleText(value)));
 function shuffleKnockoutPlaceholders(groups, advancePerGroup = 2) {
   var _byRank$;
   const byRank = [];
@@ -957,14 +979,18 @@ const LeagueView = ({
   onUpdateLineup,
   config: cfg,
   onCourtChange,
-  isAdmin
+  isAdmin,
+  onRankByChange
 }) => {
   const config = cfg;
   const sm = isSetsGame(config === null || config === void 0 ? void 0 : config.sport);
-  const standings = calculateStandings(participants, rounds, sm);
+  const standings = calculateStandings(participants, rounds, sm, config === null || config === void 0 ? void 0 : config.rankBy);
   return React.createElement("div", {
     className: "space-y-10"
-  }, React.createElement("section", {
+  }, React.createElement(RankByBar, {
+    value: config === null || config === void 0 ? void 0 : config.rankBy,
+    onChange: onRankByChange
+  }), React.createElement("section", {
     className: "bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden"
   }, React.createElement("div", {
     className: "flex justify-between items-center mb-6"
@@ -1064,7 +1090,7 @@ const LeagueView = ({
     className: "flex items-center gap-1.5"
   }, React.createElement("div", {
     className: "w-2 h-2 bg-amber-500 rounded-full"
-  }), "현재 1위"), React.createElement("p", null, "※ 순위: 승점 > 득실차 > 다득점"), React.createElement("p", null, "※ 승점: 승 3점 · 무 1점 · 패 1점"), sm && React.createElement("p", null, "※ 세트득/실: 세트 승수 합계 · 득점/실점: 세트별 실제 점수 합계"))), React.createElement(ScheduleSection, {
+  }), "현재 1위"), React.createElement("p", null, "※ 순위: ", rankRuleText(config === null || config === void 0 ? void 0 : config.rankBy)), React.createElement("p", null, "※ 승점: 승 3점 · 무 1점 · 패 1점"), sm && React.createElement("p", null, "※ 세트득/실: 세트 승수 합계 · 득점/실점: 세트별 실제 점수 합계"))), React.createElement(ScheduleSection, {
     rounds: rounds,
     config: cfg,
     onMatchClick: onMatchClick,
@@ -1478,11 +1504,13 @@ const GroupStageView = ({
   onScoreboardLink,
   onAddRound,
   onDeleteRound,
-  config
+  config,
+  onRankByChange
 }) => {
   const [expanded, setExpanded] = useState({});
   const [standingsCollapsed, setStandingsCollapsed] = useState({});
   const sm = isSetsGame(config === null || config === void 0 ? void 0 : config.sport);
+  const avgMode = (config === null || config === void 0 ? void 0 : config.rankBy) === 'avg';
   const toggle = gid => setExpanded(prev => ({
     ...prev,
     [gid]: !prev[gid]
@@ -1493,12 +1521,15 @@ const GroupStageView = ({
   }));
   return React.createElement("div", {
     className: "space-y-12"
-  }, React.createElement("div", {
+  }, React.createElement(RankByBar, {
+    value: config === null || config === void 0 ? void 0 : config.rankBy,
+    onChange: onRankByChange
+  }), React.createElement("div", {
     className: "grid grid-cols-1 md:grid-cols-2 gap-8"
   }, groups.map(g => {
     const isExp = !!expanded[g.id];
     const stClosed = !!standingsCollapsed[g.id];
-    const standings = g.standings && g.standings.length > 0 && g.standings[0].pfAvg !== undefined ? g.standings : calculateStandings(g.participants || [], g.rounds || [], sm);
+    const standings = calculateStandings(g.participants || [], g.rounds || [], sm, config === null || config === void 0 ? void 0 : config.rankBy);
     const leader = standings[0];
     return React.createElement("div", {
       key: g.id,
@@ -1527,7 +1558,7 @@ const GroupStageView = ({
       className: "font-black text-amber-900"
     }, "1위: ", leader.name), React.createElement("span", {
       className: "text-amber-600 font-bold ml-auto"
-    }, leader.pts || 0, "점")), !stClosed && React.createElement("div", {
+    }, (config === null || config === void 0 ? void 0 : config.rankBy) === 'avg' ? `평균 ${(leader.pfAvg || 0).toFixed(1)}점` : `${leader.pts || 0}점`)), !stClosed && React.createElement("div", {
       className: "overflow-x-auto mb-6"
     }, React.createElement("table", {
       className: `w-full ${isExp ? 'text-[12px]' : 'text-[13px] sm:text-sm'}`
@@ -1553,7 +1584,9 @@ const GroupStageView = ({
       className: "text-center pb-2"
     }, "실점"), React.createElement("th", {
       className: "text-center pb-2"
-    }, isExp ? '득실' : '득실'), isExp && React.createElement("th", {
+    }, "득실"), !isExp && avgMode && React.createElement("th", {
+      className: "text-center pb-2 bg-blue-50/50"
+    }, "평균"), isExp && React.createElement("th", {
       className: "text-center pb-2 bg-blue-50/50"
     }, "득점평균"), isExp && React.createElement("th", {
       className: "text-center pb-2 bg-blue-50/50"
@@ -1585,9 +1618,11 @@ const GroupStageView = ({
     }, s.pa || 0), React.createElement("td", {
       className: "py-2 text-center font-medium text-slate-600"
     }, (() => {
-      const v = isExp ? s.pd || 0 : s.gd || 0;
+      const v = isExp || avgMode ? s.pd || 0 : s.gd || 0;   // 평균 득점 순 대회는 간단히 보기도 점수 득실
       return v > 0 ? `+${v}` : v;
-    })()), isExp && React.createElement("td", {
+    })()), !isExp && avgMode && React.createElement("td", {
+      className: "py-2 text-center text-blue-700 font-bold bg-blue-50/30"
+    }, (s.pfAvg || 0).toFixed(1)), isExp && React.createElement("td", {
       className: "py-2 text-center text-blue-700 font-bold bg-blue-50/30"
     }, (s.pfAvg || 0).toFixed(2)), isExp && React.createElement("td", {
       className: "py-2 text-center text-blue-700 font-bold bg-blue-50/30"
@@ -1609,7 +1644,7 @@ const GroupStageView = ({
       className: "flex items-center gap-1"
     }, React.createElement("div", {
       className: "w-2 h-2 bg-amber-300 rounded-sm"
-    }), "결석 포함"), React.createElement("span", null, "기준: 승점 > 득실차 > 다득점")));
+    }), "결석 포함"), React.createElement("span", null, "기준: ", rankRuleText(config === null || config === void 0 ? void 0 : config.rankBy))));
   })));
 };
 const GroupScheduleBlock = ({
@@ -3643,7 +3678,7 @@ const ScoreboardView = ({
           const sm2 = isSetsGame(config2.sport);
           data.generatedGroups = data.generatedGroups.map(g => ({
             ...g,
-            standings: calculateStandings(g.participants, g.rounds, sm2)
+            standings: calculateStandings(g.participants, g.rounds, sm2, config2.rankBy)
           }));
         } else if (data.generatedLeague) {
           data.generatedLeague = data.generatedLeague.map(r => ({
@@ -5516,6 +5551,11 @@ const App = () => {
       const data = snap.val();
       if (!data) return;
       remoteUpdateRef.current = true;
+      // 순위 기준은 다른 기기에서 바뀔 수 있다 — 안 받아오면 이 기기가 다음 저장 때 옛 값으로 덮어쓴다
+      if (data.config) setConfig(prev => prev.rankBy === data.config.rankBy ? prev : {
+        ...prev,
+        rankBy: data.config.rankBy
+      });
       setGeneratedMatches(data.generatedMatches || []);
       setGeneratedLeague(data.generatedLeague || []);
       setGeneratedGroups(data.generatedGroups || []);
@@ -5949,7 +5989,7 @@ const App = () => {
   };
   const handleExportToSheets = () => {
     const sm = isSetsGame(config.sport);
-    const standings = config.tournamentType === TType.LEAGUE ? calculateStandings(activeParticipants, generatedLeague, sm) : null;
+    const standings = config.tournamentType === TType.LEAGUE ? calculateStandings(activeParticipants, generatedLeague, sm, config.rankBy) : null;
     let rec = {
       config,
       participants,
@@ -6260,7 +6300,7 @@ const App = () => {
         return {
           ...g,
           rounds: ur,
-          standings: calculateStandings(g.participants, ur, isSetsGame(config.sport))
+          standings: calculateStandings(g.participants, ur, isSetsGame(config.sport), config.rankBy)
         };
       });
       setGeneratedGroups(ug);
@@ -6330,7 +6370,7 @@ const App = () => {
       const groups = finalData;
       groups.forEach(g => {
         g.rounds = generateLeagueSchedule(g.participants, g.id);
-        g.standings = calculateStandings(g.participants, g.rounds, isSetsGame(config.sport));
+        g.standings = calculateStandings(g.participants, g.rounds, isSetsGame(config.sport), config.rankBy);
       });
       setGeneratedGroups(groups);
       if (config.tournamentType === TType.GROUP_KNOCKOUT) {
@@ -6926,6 +6966,10 @@ const App = () => {
     participants: activeParticipants,
     rounds: generatedLeague,
     config: config,
+    onRankByChange: canEdit ? v => setConfig({
+      ...config,
+      rankBy: v
+    }) : null,
     onMatchClick: m => canEdit && setSelectedLeagueMatch({
       match: m
     }),
@@ -6948,6 +6992,10 @@ const App = () => {
   }, React.createElement(GroupStageView, {
     groups: generatedGroups,
     config: config,
+    onRankByChange: canEdit ? v => setConfig({
+      ...config,
+      rankBy: v
+    }) : null,
     onMatchClick: (m, gid) => canEdit && setSelectedLeagueMatch({
       match: m,
       groupId: gid
@@ -7049,7 +7097,24 @@ const App = () => {
     className: "text-[10px] text-slate-400 mt-0.5"
   }, n === 1 ? '1위만' : `상위 ${n}명`)))), React.createElement("p", {
     className: "text-[11px] text-slate-500"
-  }, "예: 2명 선택 → 각 조 1·2위 본선 진출. 같은 조 출신은 1라운드에서 만나지 않게 자동 배치됩니다.")), isSetsGame(config.sport) && config.tournamentType !== TType.KDK && React.createElement("div", {
+  }, "예: 2명 선택 → 각 조 1·2위 본선 진출. 같은 조 출신은 1라운드에서 만나지 않게 자동 배치됩니다.")), [TType.LEAGUE, TType.GROUP_LEAGUE, TType.GROUP_KNOCKOUT].includes(config.tournamentType) && React.createElement("div", {
+    className: "space-y-3"
+  }, React.createElement("label", {
+    className: "text-[12px] font-black text-slate-400 uppercase tracking-widest"
+  }, "📊 순위 기준"), React.createElement("div", {
+    className: "grid grid-cols-2 gap-3"
+  }, [['pts', '승점 순', '승점 > 득실차 > 다득점'], ['avg', '평균 득점 순', '결석으로 경기 수가 달라도 공정 · 수행평가용']].map(([v, label, sub]) => React.createElement("button", {
+    key: v,
+    onClick: () => setConfig({
+      ...config,
+      rankBy: v
+    }),
+    className: `p-4 rounded-2xl border-2 text-left transition-all ${(config.rankBy || 'pts') === v ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-100 text-slate-500 hover:border-blue-200'}`
+  }, React.createElement("p", {
+    className: "font-black text-base"
+  }, label), React.createElement("p", {
+    className: "text-[11px] text-slate-400 mt-0.5"
+  }, sub))))), isSetsGame(config.sport) && config.tournamentType !== TType.KDK && React.createElement("div", {
     className: "space-y-4"
   }, React.createElement("label", {
     className: "text-[12px] font-black text-slate-400 uppercase tracking-widest"
